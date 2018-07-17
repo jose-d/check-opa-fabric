@@ -5,7 +5,7 @@
 
 # Credits:
 #
-# Scripting: Josef Dvoracek, Atos
+# Scripting: Josef Dvoracek
 
 
 import subprocess,threading
@@ -115,7 +115,7 @@ def process_check_output(crit,warn,os,rc,message):
 
   return (l_crit,l_warn,l_os)
 
-def parse_node_from_nodedesc(nodedesc):
+def parse_node_from_nodedesc(node_desc):
   return node_desc.split(' ')[0].strip()
 
 
@@ -209,6 +209,7 @@ print "data analysis.."
 #fabric data structure - dictionary where hostname is key:
 
 fabric={}
+node2guid={}
 
 #..parse the opaextractLID:
 
@@ -222,16 +223,18 @@ csv_headers = ['SystemImageGUID','PortNum','NodeType','NodeDesc','LID']	#there i
 opa_extract_lids_csv_columns_count=int(len(csv_headers))
 
 for row in opa_extract_lids_csv_reader:        #now iterate over lines and create dictionary from every line
-  nodedesc=row[3]
-  if not nodedesc in fabric: fabric[nodedesc]={}	#create key
+  guid=row[0]
+  if not guid in fabric: fabric[guid]={}	#create key
 
   oel={}
   for column_number in range(0,opa_extract_lids_csv_columns_count):
     key=csv_headers[column_number]
     value=row[column_number]
-#    print "key: " + str(key) + " value: " + str(value)
     oel[key]=value
-  fabric[nodedesc]['opa_extract_lids']=oel
+  fabric[guid]['opa_extract_lids']=oel
+
+  #and create the node -> guid mapping (yes, for switches it will make no sense..
+  node2guid[parse_node_from_nodedesc(row[3])]=guid
 
 print "LIDs parsed.."
 
@@ -253,12 +256,16 @@ csv_headers = opa_extract_error_csv_reader.next()	#headers are the first line in
 opa_extract_error_csv_columns_count=int(len(csv_headers))
 
 for row in opa_extract_error_csv_reader:	#now iterate over lines and create dictionary from every line
-  node_desc=row[0]
-  if not node_desc in fabric: fabric[node_desc]={}	#create key
+  guid=row[1]
+  
+  if not guid in fabric: fabric[guid]={}	#create key
+  if not str(parse_node_from_nodedesc(row[0])) in node2guid: node2guid[str(parse_node_from_nodedesc(row[0]))]=guid
+
   oee={}
+
   for column_number in range(0,opa_extract_error_csv_columns_count):
     oee[csv_headers[column_number]]=row[column_number]
-  fabric[node_desc]['opa_extract_error']=oee
+  fabric[guid]['opa_extract_error']=oee
 
 #print str(fabric)
 
@@ -266,15 +273,12 @@ print "Errors parsed.."
 
 session = prepare_session('externalchecks','externalchecks')  
 
-for node_desc in fabric:
-  print str(node_desc)
-
-  node=parse_node_from_nodedesc(node_desc)
+for node in node2guid:
 
   os=""
   os=os+"<b>Comprehensive OPA check:</b>\n"
   try:
-    os=os+"LID: " + str(fabric[node_desc]['opa_extract_lids']['LID']) + "\n"
+    os=os+"LID: " + str(fabric[node2guid[node]]['opa_extract_lids']['LID']) + "\n"
   except KeyError:
     pass	#there are some data missing, we don't care
   
@@ -283,22 +287,22 @@ for node_desc in fabric:
 
   #LinkQualityIndicator
 
-  (rc,message) = check_indicator(fabric[node_desc]['opa_extract_error']['LinkQualityIndicator'],'LinkQualityIndicator',['5'],['4'])
+  (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkQualityIndicator'],'LinkQualityIndicator',['5'],['4'])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkSpeedActive
 
-  (rc,message) = check_indicator(fabric[node_desc]['opa_extract_error']['LinkSpeedActive'],'LinkSpeedActive',['25Gb'],[])
+  (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkSpeedActive'],'LinkSpeedActive',['25Gb'],[])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkWidthDnGradeTxActive
 
-  (rc,message) = check_indicator(fabric[node_desc]['opa_extract_error']['LinkWidthDnGradeTxActive'],'LinkWidthDnGradeTxActive',['4'],[])
+  (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkWidthDnGradeTxActive'],'LinkWidthDnGradeTxActive',['4'],[])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkWidthDnGradeRxActive
 
-  (rc,message) = check_indicator(fabric[node_desc]['opa_extract_error']['LinkWidthDnGradeRxActive'],'LinkWidthDnGradeRxActive',['4'],[])
+  (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkWidthDnGradeRxActive'],'LinkWidthDnGradeRxActive',['4'],[])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
   
   #print output string and push the value into icinga API
