@@ -25,7 +25,7 @@ from urlparse import urlparse	#URL validation
 
 import yaml 			#config file parsing
 
-import xml.etree.ElementTree as ET	#xml
+import re			#regular expression parsing to detect the opareport link
 
 #check config:
 
@@ -284,7 +284,75 @@ for row in opa_extract_error_csv_reader:	#now iterate over lines and create dict
 
 print "Errors parsed.."
 
-#and parse the opareport links now:
+#and parse the opareport links now - stdout_orl should look like:
+
+#Link Summary
+
+#5967 Links in Fabric:
+#Rate NodeGUID          Port Type Name
+#100g 0x001175010108866d   1 FI   co1195 hfi1_0
+#<->  0x00117501027ab700   3 SW   opa1 L113B
+#100g 0x0011750101088670   1 FI   co3425 hfi1_0
+#<->  0x00117501027aaa65   9 SW   opa3 L112B
+#100g 0x0011750101088675   1 FI   co3424 hfi1_0
+#<->  0x00117501027aaa65  10 SW   opa3 L112B
+
+#...
+
+#100g 0x001175010277aef2  39 SW   opa2 S201B
+#<->  0x0011750102783f83  39 SW   opa2 L121A
+#100g 0x001175010277aef2  44 SW   opa2 S201B
+#<->  0x0011750102783d22  29 SW   opa2 L121B
+#100g 0x001175010277aef2  46 SW   opa2 S201B
+#<->  0x00117501027ab679  27 SW   opa2 L117B
+#-------------------------------------------------------------------------------
+
+
+node_pattern = re.compile("^\d+g\s+0x\w{16}\s+\d+\s+FI") #search for 100g 0x001175010108866d   1 FI   co1195 hfi1_0
+ds_pattern = re.compile("^<->\s+0x\w{16}\s+\d+\s+SW") #same as above but different. :)
+
+node_found=False
+for row in stdout_orl.splitlines():
+  print "line" + str(row)
+
+  if node_found:	#we expect line describing the director switch line:
+    if ds_pattern.search(str(row)):
+      print "we matched switch line - good"
+      row_splitted=row.split()	#smth like: ['<->', '0x00117501027aaa65', '9', 'SW', 'opa3', 'L112B']
+      switch_guid=row_splitted[1]
+      switch_port=row_splitted[2]
+      switch_nodedesc=str(row_splitted[4]) + ' ' + str(row_splitted[5])
+
+      print "link info: node_guid:" + str(node_guid) + "switch guid: " + str(switch_guid) + ", port: " + str(switch_port) + ", desc: " + str(switch_nodedesc)
+      print str(row_splitted)
+      node_found=False
+    else:
+      print "something wrong, let's reset the state machine"
+      node_found=False
+  else:
+    if node_pattern.search(str(row)):
+      print "we matched node line - the next line will be the director switch"
+      row_splitted=row.split()	#smth like: ['100g', '0x001175010108866d', '1', 'FI', 'co1195', 'hfi1_0']
+      node_guid=row_splitted[1]
+      print str(row_splitted)
+      node_found=True
+    else:
+      print "nop"
+      node_guid=None
+      node_found=False
+
+sys.exit(int(Icinga.STATE_UNKNOWN))
+
+
+
+
+
+
+
+
+
+
+#iterate over nodes and checks good and bad things:
 session = prepare_session('externalchecks','externalchecks')
 
 #stats structure
@@ -318,7 +386,7 @@ for node in node2guid:
   (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkWidthDnGradeRxActive'],'LinkWidthDnGradeRxActive',['4'],[])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
-  #all err counters:
+  #all "simple" err counters - we're chacking if number is higher than some threshold.
   for counter in error_counters:
     rs="[OK]"
     value=int(fabric[node2guid[node]]['opa_extract_error'][counter])
