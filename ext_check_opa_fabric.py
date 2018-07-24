@@ -218,6 +218,16 @@ command_string='opareport -q -o links'
 cmd = Command(command_string)
 (rc_orl,stdout_orl,stderr_orl) = cmd.run(30)        #30 sec is enough for everyone. :)
 
+#opareport -o nodes -N -d 1
+
+print "running opareport -o nodes"
+command_string='opareport -o nodes -N -d 1'
+
+cmd = Command(command_string)
+(rc_orn,stdout_orn,stderr_orn) = cmd.run(30)        #30 sec is enough for everyone. :)
+
+
+
 
 print "data analysis.."
 
@@ -248,7 +258,7 @@ for row in opa_extract_lids_csv_reader:        #now iterate over lines and creat
     oel[key]=value
   fabric[guid]['opa_extract_lids']=oel
 
-  #and create the node -> guid mapping (yes, for switches it will make no sense..
+  #and create the node -> guid mapping (yes, for switches it will make no sense..(?)
   node2guid[parse_node_from_nodedesc(row[3])]=guid
 
 print "LIDs parsed.."
@@ -261,6 +271,8 @@ except:
   print "ERR: csv parse orror in opaextracterror output."
   sys.exit(int(Icinga.STATE_UNKNOWN))
 
+opa_errors={}
+
 #this is in the CSV variable now:
 #['NodeDesc', 'SystemImageGUID', 'PortNum', 'LinkSpeedActive', 'LinkWidthDnGradeTxActive', 'LinkWidthDnGradeRxActive', 'LinkQualityIndicator', 'RcvSwitchRelayErrors', 'LocalLinkIntegrityErrors', 'RcvErrors', 'ExcessiveBufferOverruns', 'FMConfigErrors', 'LinkErrorRecovery', 'LinkDowned', 'UncorrectableErrors', 'RcvConstraintErrors', 'XmitConstraintErrors']
 #['co1195 hfi1_0', '0x001175010108866d', '1', '25Gb', '4', '4', '5', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0']
@@ -272,6 +284,8 @@ opa_extract_error_csv_columns_count=int(len(csv_headers))
 
 for row in opa_extract_error_csv_reader:	#now iterate over lines and create dictionary from every line
   guid=row[1]
+  portnr=row[2]
+  node_desc=row[0]
   oee={}
   
   if not guid in fabric: fabric[guid]={}	#create key it it's not there..
@@ -282,7 +296,43 @@ for row in opa_extract_error_csv_reader:	#now iterate over lines and create dict
 
   fabric[guid]['opa_extract_error']=oee
 
+  if not node_desc in opa_errors: opa_errors[node_desc]={}
+  if not portnr in opa_errors[node_desc]: opa_errors[node_desc][int(portnr)]=oee
+
 print "Errors parsed.."
+
+#and parse the NodeGuid to SystemImageGuid
+# we look for following patterns:
+# NodeGUID: 0x00117501027bc7c6 Type: SW
+# Ports: 48 PartitionCap: 32 SystemImageGuid: 0x00117501fb000485
+
+node_guid_pattern = re.compile("\s+NodeGUID:\s\w{16}")
+system_image_guid_pattern = re.compile("SystemImageGuid:")
+
+node_guid_matched = False
+
+node_guid_to_system_image_guid={}
+system_image_guid_to_node_guid={}
+
+for line in stdout_orn.splitlines():
+  if not node_guid_matched:
+    if node_guid_pattern.search(str(line)) and "SW" in str(line):
+      line_splitted = line.split()
+      node_guid_matched = True
+      node_guid=line_splitted[1]
+#      print node_guid
+  else:
+    if system_image_guid_pattern.search(str(line)):
+      line_splitted = line.split()
+      system_image_guid=line_splitted[5]
+#      print system_image_guid
+      node_guid_to_system_image_guid[node_guid]=system_image_guid
+#      system_image_guid_to_node_guid[system_image_guid]=node_guid  #this make no sense
+
+      node_guid_matched = False
+    else:
+      node_guid_matched = False
+
 
 #and parse the opareport links now - stdout_orl should look like:
 
@@ -292,19 +342,9 @@ print "Errors parsed.."
 #Rate NodeGUID          Port Type Name
 #100g 0x001175010108866d   1 FI   co1195 hfi1_0
 #<->  0x00117501027ab700   3 SW   opa1 L113B
-#100g 0x0011750101088670   1 FI   co3425 hfi1_0
-#<->  0x00117501027aaa65   9 SW   opa3 L112B
-#100g 0x0011750101088675   1 FI   co3424 hfi1_0
-#<->  0x00117501027aaa65  10 SW   opa3 L112B
-
 #...
-
 #100g 0x001175010277aef2  39 SW   opa2 S201B
 #<->  0x0011750102783f83  39 SW   opa2 L121A
-#100g 0x001175010277aef2  44 SW   opa2 S201B
-#<->  0x0011750102783d22  29 SW   opa2 L121B
-#100g 0x001175010277aef2  46 SW   opa2 S201B
-#<->  0x00117501027ab679  27 SW   opa2 L117B
 #-------------------------------------------------------------------------------
 
 
@@ -312,48 +352,54 @@ node_pattern = re.compile("^\d+g\s+0x\w{16}\s+\d+\s+FI") #search for 100g 0x0011
 ds_pattern = re.compile("^<->\s+0x\w{16}\s+\d+\s+SW") #same as above but different. :)
 
 node_found=False
+
+#reset variables:
+
+node_guid = None
+node_nodedesc = None
+
 for row in stdout_orl.splitlines():
-  print "line" + str(row)
 
   if node_found:	#we expect line describing the director switch line:
     if ds_pattern.search(str(row)):
-      print "we matched switch line - good"
       row_splitted=row.split()	#smth like: ['<->', '0x00117501027aaa65', '9', 'SW', 'opa3', 'L112B']
+
       switch_guid=row_splitted[1]
       switch_port=row_splitted[2]
-      switch_nodedesc=str(row_splitted[4]) + ' ' + str(row_splitted[5])
 
-      print "link info: node_guid:" + str(node_guid) + "switch guid: " + str(switch_guid) + ", port: " + str(switch_port) + ", desc: " + str(switch_nodedesc)
-      print str(row_splitted)
+      #the rest of line will be nodedesc
+      switch_nodedesc=""
+      for row_splitted_index in range(4,len(row_splitted)):
+        switch_nodedesc=switch_nodedesc+row_splitted[row_splitted_index] + " "
+
+      print "link info: node_guid: " + str(node_guid) + " (" + str(node_nodedesc) + ") switch guid: " + str(switch_guid) + ", port: " + str(switch_port) + ", desc: " + str(switch_nodedesc)
+      if node_guid in fabric:
+        fabric[node_guid]['nb'] = ( switch_guid,switch_port,switch_nodedesc)  #the switch guid is NODEGUID - not PORT_GUID (!) :(
+      else:
+        print "err: node is missing in fabric, strange error."
+
       node_found=False
     else:
-      print "something wrong, let's reset the state machine"
       node_found=False
   else:
     if node_pattern.search(str(row)):
-      print "we matched node line - the next line will be the director switch"
-      row_splitted=row.split()	#smth like: ['100g', '0x001175010108866d', '1', 'FI', 'co1195', 'hfi1_0']
+      row_splitted=row.split()  #smth like: ['100g', '0x001175010108866d', '1', 'FI', 'co1195', 'hfi1_0']
       node_guid=row_splitted[1]
-      print str(row_splitted)
+
+      node_nodedesc=""
+      for row_splitted_index in range(4,len(row_splitted)):
+        node_nodedesc = node_nodedesc + row_splitted[row_splitted_index] + " "
       node_found=True
     else:
-      print "nop"
       node_guid=None
       node_found=False
 
-sys.exit(int(Icinga.STATE_UNKNOWN))
 
-
-
-
-
-
-
-
-
+print "Node neighboors parsed.."
 
 #iterate over nodes and checks good and bad things:
 session = prepare_session('externalchecks','externalchecks')
+
 
 #stats structure
 stats=Stats()
@@ -363,33 +409,46 @@ for node in node2guid:
   os=""
   os=os+"<b>Comprehensive OPA check:</b>\n"
   try:
-    os=os+"LID: " + str(fabric[node2guid[node]]['opa_extract_lids']['LID']) + "\n"
+    nb=fabric[node2guid[node]]['nb']
+    nb_image = node_guid_to_system_image_guid[nb[0]]
+
+    remote_errors = opa_errors[str(nb[2]).strip()][int(nb[1])]
+    local_errors = fabric[node2guid[node]]['opa_extract_error']
+
+
+
+    os = os + "RAW Neighboor errs: " + str(remote_errors) + "\n"
+    os = os + "LID: " + str(fabric[node2guid[node]]['opa_extract_lids']['LID']) + "\n"
+    os = os + "neighboor" + str(nb) + "nb image guid:" + str(nb_image) + '\n'
   except KeyError:
+#    raise
     pass	#there are some data missing, we don't care
+
+
   
   crit=False
   warn=False
 
   #LinkQualityIndicator
-  (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkQualityIndicator'],'LinkQualityIndicator',['5'],['4'])
+  (rc,message) = check_indicator(local_errors['LinkQualityIndicator'],'LinkQualityIndicator',['5'],['4'])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkSpeedActive
-  (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkSpeedActive'],'LinkSpeedActive',['25Gb'],[])
+  (rc,message) = check_indicator(local_errors['LinkSpeedActive'],'LinkSpeedActive',['25Gb'],[])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkWidthDnGradeTxActive
-  (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkWidthDnGradeTxActive'],'LinkWidthDnGradeTxActive',['4'],[])
+  (rc,message) = check_indicator(local_errors['LinkWidthDnGradeTxActive'],'LinkWidthDnGradeTxActive',['4'],[])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkWidthDnGradeRxActive
-  (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkWidthDnGradeRxActive'],'LinkWidthDnGradeRxActive',['4'],[])
+  (rc,message) = check_indicator(local_errors['LinkWidthDnGradeRxActive'],'LinkWidthDnGradeRxActive',['4'],[])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #all "simple" err counters - we're chacking if number is higher than some threshold.
   for counter in error_counters:
     rs="[OK]"
-    value=int(fabric[node2guid[node]]['opa_extract_error'][counter])
+    value=int(local_errors[counter])
     stats.save_stat(fabric,node,value,counter)
     if value>error_counters[counter]['warn']:
       warn=True
