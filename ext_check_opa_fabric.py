@@ -25,6 +25,7 @@ from urlparse import urlparse	#URL validation
 
 import yaml 			#config file parsing
 
+import xml.etree.ElementTree as ET	#xml
 
 #check config:
 
@@ -62,16 +63,14 @@ def post_check_result(icingaserver,icingaserverport,host,check,status,output,sou
   URL='https://' + str(icingaserver) + ":" + str(icingaserverport) + '/v1/actions/process-check-result?service=' + str(host) + '!' + str(check)
   try:
     r=session.post(URL,json={'exit_status':str(status),'plugin_output':str(output),'check_source':str(source)},headers={'Accept': 'application/json','Connection':'close'})
-    print "text" + str(r.text)
+    if r.status_code == 200:
+      return True
+    else:
+      return False
   except:
-    print "error(post_check_result): http(s) POST method failed."
     return False
   
   print "posted."
-  #print "URL: " + str(URL)
-  #print "status_code" + str(r.status_code)
-  #print "reason" + str(r.reason)
-  #print "text" + str(r.text)
 
 def uri_validator(x):
   try:
@@ -94,12 +93,9 @@ def check_indicator(value,name,ok_values,warning_values):
     message="[Critical] indicator " + str(name) + " is at critical level, " + str(value) + "/" + str(ok_values) + "."
     crit=True
 
-  if crit:
-    rc=2
-  elif warn:
-    rc=1
-  else:
-    rc=0
+  if crit: rc=2
+  elif warn: rc=1
+  else: rc=0
 
   return (rc,message)
 
@@ -118,6 +114,25 @@ def process_check_output(crit,warn,os,rc,message):
 def parse_node_from_nodedesc(node_desc):
   return node_desc.split(' ')[0].strip()
 
+
+class Stats():
+
+  def __init__(self):
+    self.stats={}
+
+  def save_stat(self,fabric,node,value,metricname):
+    if metricname not in self.stats:	#if not yet there, we will define default values
+      self.stats[metricname]={}
+      self.stats[metricname]['min']=int(+9999)
+      self.stats[metricname]['max']=int(-9999)
+
+    if int(value) > int(self.stats[metricname]['max']): #if bigger than maximum, save it as new maximum
+      self.stats[metricname]['max'] = value
+    elif int(value) < int(self.stats[metricname]['min']):	#if smaller than minimum, save it as new minimum
+      self.stats[metricname]['min'] = value
+
+  def __str__(self):
+    return "stats (dummy _str_ function..)\n" + str(self.stats) + "end of stats\n"
 
 
 class Icinga():
@@ -153,56 +168,56 @@ class Command(object):
     return (self.rc,self.stdout,self.stderr)
 
 
-#parse arguments:
-
-
-#parser = argparse.ArgumentParser()
-#requiredNamed = parser.add_argument_group('required arguments')		#default group is called "optional arguments"
-
-#mandatory arguments:
-#requiredNamed.add_argument('-s','--service', help='HA service to monitor', required=True)
-
-#optional arguments:
-#parser.add_argument('-m','--master', action='store_true')
-
-#args = parser.parse_args()
-
-#if args.service:
-#  pass
-#else:
-#  print "Unknown: you have to specify service to check"
-#  sys.exit(int(Icinga.STATE_UNKNOWN))
-
-
-# get config from config file - hardcod
+# get config from config file - the config file path is now hardcoded..
 
 configpath = os.path.abspath("/usr/local/monitoring/ext_check_opa_fabric.conf")
 
 if os.path.isfile(configpath):
   conffile = open(configpath,'r')
   conf = yaml.safe_load(conffile)
+  print "conf"
+  print str(conf)
+  print "end of conf"
   conffile.close()
 else:
   print "No config file found"
   sys.exit(2)
 
+#parse counters and their thresholds:
 
+error_counters={}
+for item in conf['thresholds']:
+  counter_name=str(item['counter'])
+  error_counters[counter_name]={}
+  error_counters[counter_name]['crit']=item['crit']
+  error_counters[counter_name]['warn']=item['warn']
 
-#compose command line:
+print str(error_counters)
+
+#execute the opa*tools and parse results:
 
 print "extracting LIDs from fabric.."
-
 command_string='opaextractlids -q -F nodetype:FI'
 
 cmd = Command(command_string)
 (rc_oel,stdout_oel,stderr_oel) = cmd.run(15)	#15 sec is enough for everyone. :)
 
-print "extracting Errors in fabric.."
+#opaextracterror -q
 
+print "extracting Errors in fabric.."
 command_string='opaextracterror -q'
 
 cmd = Command(command_string)
 (rc_oee,stdout_oee,stderr_oee) = cmd.run(30)        #30 sec is enough for everyone. :)
+
+#opareport -q -o links
+
+print "extracting Link info from fabric.."
+command_string='opareport -q -o links'
+
+cmd = Command(command_string)
+(rc_orl,stdout_orl,stderr_orl) = cmd.run(30)        #30 sec is enough for everyone. :)
+
 
 print "data analysis.."
 
@@ -257,22 +272,24 @@ opa_extract_error_csv_columns_count=int(len(csv_headers))
 
 for row in opa_extract_error_csv_reader:	#now iterate over lines and create dictionary from every line
   guid=row[1]
-  
-  if not guid in fabric: fabric[guid]={}	#create key
-  if not str(parse_node_from_nodedesc(row[0])) in node2guid: node2guid[str(parse_node_from_nodedesc(row[0]))]=guid
-
   oee={}
+  
+  if not guid in fabric: fabric[guid]={}	#create key it it's not there..
+  if not str(parse_node_from_nodedesc(row[0])) in node2guid: node2guid[str(parse_node_from_nodedesc(row[0]))]=guid	#create key if it's not there..
 
   for column_number in range(0,opa_extract_error_csv_columns_count):
     oee[csv_headers[column_number]]=row[column_number]
-  fabric[guid]['opa_extract_error']=oee
 
-#print str(fabric)
+  fabric[guid]['opa_extract_error']=oee
 
 print "Errors parsed.."
 
-session = prepare_session('externalchecks','externalchecks')  
+#and parse the opareport links now:
+session = prepare_session('externalchecks','externalchecks')
 
+#stats structure
+stats=Stats()
+  
 for node in node2guid:
 
   os=""
@@ -286,35 +303,49 @@ for node in node2guid:
   warn=False
 
   #LinkQualityIndicator
-
   (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkQualityIndicator'],'LinkQualityIndicator',['5'],['4'])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkSpeedActive
-
   (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkSpeedActive'],'LinkSpeedActive',['25Gb'],[])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkWidthDnGradeTxActive
-
   (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkWidthDnGradeTxActive'],'LinkWidthDnGradeTxActive',['4'],[])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkWidthDnGradeRxActive
-
   (rc,message) = check_indicator(fabric[node2guid[node]]['opa_extract_error']['LinkWidthDnGradeRxActive'],'LinkWidthDnGradeRxActive',['4'],[])
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
-  
+
+  #all err counters:
+  for counter in error_counters:
+    rs="[OK]"
+    value=int(fabric[node2guid[node]]['opa_extract_error'][counter])
+    stats.save_stat(fabric,node,value,counter)
+    if value>error_counters[counter]['warn']:
+      warn=True
+      rs="[WARN]"
+    if value>error_counters[counter]['crit']:
+      crit=True
+      rs="[CRIT]"
+    os=os+str(rs)+":"+str(counter) + " " + str(value) + "\n"
+    
+
   #print output string and push the value into icinga API
 
   print str(os)
   oc=0
+  node_fqdn=str(node) + str(conf['node_to_fqdn_suffix'])
+  print "fqdn:" + str(node_fqdn)
 
   if warn: oc=1
   if crit: oc=2
 
   session = prepare_session(conf['api_user'],conf['api_pass'])	#for every POST we need new session. thats "feature" of ICINGA. lel. :( :)
-  post_check_result(conf['api_host'],int(conf['api_port']),str(node) + conf['node_to_fqdn_suffix'],"external-poc-OPA-quality",int(oc),str(os),conf['check_source'])
+  result = post_check_result(conf['api_host'],int(conf['api_port']),str(node_fqdn),"external-poc-OPA-quality",int(oc),str(os),conf['check_source'])
+
+print str(stats)
 
 sys.exit(int(Icinga.STATE_UNKNOWN))
 
