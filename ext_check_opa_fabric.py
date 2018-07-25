@@ -43,7 +43,7 @@ def parse_int_value_from_ipmitool_line(ipmitool_line):
     return i
   except:
     print "ERR in parse_int_value_from_ipmitool_line: Error when parsing Integer value from line " + str(ipmitool_line)
-    sys.exit(int(STATE_UNKNOWN))
+    sys.exit(int(Icinga.STATE_UNKNOWN))
 
 def prepare_session(httpuser,httppassword):
 
@@ -107,12 +107,50 @@ def process_check_output(crit,warn,os,rc,message):
   
   if rc==2: l_crit=True
   elif rc==1: l_warn=True
-  l_os=str(l_os)+str(message)+'\n'
+  l_os=str(l_os)+'<p>'+str(message)+'</p>'
 
   return (l_crit,l_warn,l_os)
 
 def parse_node_from_nodedesc(node_desc):
   return node_desc.split(' ')[0].strip()
+
+def check_port(port_error_counters):
+
+  crit=False
+  warn=False
+  os=""
+
+  #LinkQualityIndicator
+  (rc,message) = check_indicator(port_error_counters['LinkQualityIndicator'],'LinkQualityIndicator',['5'],['4'])
+  (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
+
+  #LinkSpeedActive
+  (rc,message) = check_indicator(port_error_counters['LinkSpeedActive'],'LinkSpeedActive',['25Gb'],[])
+  (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
+
+  #LinkWidthDnGradeTxActive
+  (rc,message) = check_indicator(port_error_counters['LinkWidthDnGradeTxActive'],'LinkWidthDnGradeTxActive',['4'],[])
+  (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
+
+  #LinkWidthDnGradeRxActive
+  (rc,message) = check_indicator(port_error_counters['LinkWidthDnGradeRxActive'],'LinkWidthDnGradeRxActive',['4'],[])
+  (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
+
+  #all "simple" err counters - we're chacking if number is higher than some threshold.
+  for counter in error_counters:
+    rs="[OK]"
+    value=int(port_error_counters[counter])
+    stats.save_stat(fabric,node,value,counter)
+    if value>error_counters[counter]['warn']:
+      warn=True
+      rs="[WARNING]"
+    if value>error_counters[counter]['crit']:
+      crit=True
+      rs="[CRITICAL]"
+    os = os + '<p>' + str(rs) + ":" + str(counter) + " " + str(value) + "</p>"
+
+  return (crit,warn,os)
+
 
 
 class Stats():
@@ -133,7 +171,6 @@ class Stats():
 
   def __str__(self):
     return "stats (dummy _str_ function..)\n" + str(self.stats) + "end of stats\n"
-
 
 class Icinga():
   STATE_OK=0
@@ -166,7 +203,6 @@ class Command(object):
       self.rc=999
 
     return (self.rc,self.stdout,self.stderr)
-
 
 # get config from config file - the config file path is now hardcoded..
 
@@ -225,8 +261,6 @@ command_string='opareport -o nodes -N -d 1'
 
 cmd = Command(command_string)
 (rc_orn,stdout_orn,stderr_orn) = cmd.run(30)        #30 sec is enough for everyone. :)
-
-
 
 
 print "data analysis.."
@@ -406,62 +440,68 @@ stats=Stats()
   
 for node in node2guid:
 
+  #reset the loop variables where needed:
   os=""
-  os=os+"<b>Comprehensive OPA check:</b>\n"
+
   try:
-    nb=fabric[node2guid[node]]['nb']
-    nb_image = node_guid_to_system_image_guid[nb[0]]
 
-    remote_errors = opa_errors[str(nb[2]).strip()][int(nb[1])]
-    local_errors = fabric[node2guid[node]]['opa_extract_error']
+    # parse data from fabric data structures:
 
+    nb=fabric[node2guid[node]]['nb']                  #get neighboor node guid
+    nb_image = node_guid_to_system_image_guid[nb[0]]  #convert to image guid
 
+    remote_errors = opa_errors[str(nb[2]).strip()][int(nb[1])]    #get error data structure for remote port
+    local_errors = fabric[node2guid[node]]['opa_extract_error']   #get error data structure for local port
 
-    os = os + "RAW Neighboor errs: " + str(remote_errors) + "\n"
-    os = os + "LID: " + str(fabric[node2guid[node]]['opa_extract_lids']['LID']) + "\n"
-    os = os + "neighboor" + str(nb) + "nb image guid:" + str(nb_image) + '\n'
+    local_lid=fabric[node2guid[node]]['opa_extract_lids']['LID']
+
+    remote_port_guid=nb[0]
+    remote_port_portnr=nb[1]
+    remote_port_nodedesc=nb[2]
+
   except KeyError:
-#    raise
-    pass	#there are some data missing, we don't care
+#    raise  #for debug uncomment
+    pass	#there are some data missing, we don't care - most likely this is just disconnected/off node etc.
 
-
-  
   crit=False
   warn=False
 
-  #LinkQualityIndicator
-  (rc,message) = check_indicator(local_errors['LinkQualityIndicator'],'LinkQualityIndicator',['5'],['4'])
-  (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
+  (r_crit,r_warn,r_os) = check_port(remote_errors)
+  (l_crit,l_warn,l_os) = check_port(local_errors)
 
-  #LinkSpeedActive
-  (rc,message) = check_indicator(local_errors['LinkSpeedActive'],'LinkSpeedActive',['25Gb'],[])
-  (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
+  #process return code:
+  if r_crit or l_crit:
+    crit=True
+  elif r_warn or l_warn:
+    warn=True
 
-  #LinkWidthDnGradeTxActive
-  (rc,message) = check_indicator(local_errors['LinkWidthDnGradeTxActive'],'LinkWidthDnGradeTxActive',['4'],[])
-  (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
+  #header for the output
 
-  #LinkWidthDnGradeRxActive
-  (rc,message) = check_indicator(local_errors['LinkWidthDnGradeRxActive'],'LinkWidthDnGradeRxActive',['4'],[])
-  (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
+#  os=str(os)+'<p>'
 
-  #all "simple" err counters - we're chacking if number is higher than some threshold.
-  for counter in error_counters:
-    rs="[OK]"
-    value=int(local_errors[counter])
-    stats.save_stat(fabric,node,value,counter)
-    if value>error_counters[counter]['warn']:
-      warn=True
-      rs="[WARN]"
-    if value>error_counters[counter]['crit']:
-      crit=True
-      rs="[CRIT]"
-    os=os+str(rs)+":"+str(counter) + " " + str(value) + "\n"
-    
+  if l_crit or l_warn:
+    os=str(os)+"local port problem"
+  if r_crit or r_warn:
+    os=str(os)+"remote port problem"
 
-  #print output string and push the value into icinga API
+  if not (l_crit or l_warn) and not (r_crit or r_warn):
+    os=str(os)+"[OK] - both sides of link are OK"
 
-  print str(os)
+  os=str(os)+'\n'
+
+  os=str(os)+"<p>"
+  os=str(os)+"<b>Local port summary</b>"
+  os=str(os)+str(l_os)
+  os=str(os)+'</p>'
+
+  os=str(os)+"<p>"
+  os=str(os)+"<b>Remote port summary</b>"
+  os=str(os)+str(r_os)
+  os=str(os)+"</p>"
+
+
+
+  print "OS" + str(os)
   oc=0
   node_fqdn=str(node) + str(conf['node_to_fqdn_suffix'])
   print "fqdn:" + str(node_fqdn)
