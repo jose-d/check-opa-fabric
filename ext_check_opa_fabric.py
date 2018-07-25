@@ -409,18 +409,21 @@ for line in stdout_orn.splitlines():
       line_splitted = line.split()
       node_guid_matched = True
       node_guid=line_splitted[1]
-#      print node_guid
   else:
     if system_image_guid_pattern.search(str(line)):
       line_splitted = line.split()
       system_image_guid=line_splitted[5]
-#      print system_image_guid
       node_guid_to_system_image_guid[node_guid]=system_image_guid
-#      system_image_guid_to_node_guid[system_image_guid]=node_guid  #this make no sense
-
       node_guid_matched = False
     else:
       node_guid_matched = False
+
+#parse the links between top and director switches
+
+#100g 0x00117501020c3864  25 SW   top06
+#<->  0x001175010277954a   8 SW   opa4 L121B
+
+
 
 
 #and parse the opareport links now - stdout_orl should look like:
@@ -493,7 +496,7 @@ session = prepare_session('externalchecks','externalchecks')
 #stats structure
 stats=Stats()
   
-for node in node2guid:
+for node in node2guid:  #provide results for nodes
 
   #reset the loop variables where needed:
   os=""
@@ -566,12 +569,33 @@ for node in node2guid:
   session = prepare_session(conf['api_user'],conf['api_pass'])	#for every POST we need new session. thats "feature" of ICINGA. lel. :( :)
   result = post_check_result(conf['api_host'],int(conf['api_port']),str(node_fqdn),"external-poc-OPA-quality",int(oc),str(os),conf['check_source'])
 
-#print str(stats) just for debug
+#check the TOP switches if they have expected amount of downlinks:
 
-sys.exit(int(Icinga.STATE_UNKNOWN))
+for switch in top_level_switches:
+  oc=0
+  os=""
 
-#we want to submit smth like this:
-#curl -k -s -u seecret:seecret -H 'Accept: application/json' -X POST 'https://localhost:15665/v1/actions/process-check-result?service=icinga_node_hostname!icinga_check_name' -d '{ "exit_status": 0, "plugin_output": "catch me if you can \n aa \n <html><small>a</small></html>",  "check_source": "example.localdomain" }' | python -m json.tool
+  switch_fqdn=str(switch) + str(conf['node_to_fqdn_suffix'])
+
+  print "switch: " + str(switch)
+  #count the ports:
+  portcount=0
+  for port in opa_errors[switch]:
+    portcount=portcount+1
+  print "port count" + str(portcount)
+  if int(conf['top_level_switch_downlinks_count']) != int(portcount):
+    os = "[WARNING] different (" + str(portcount) + ") than expected (" + str(conf['top_level_switch_downlinks_count'])+ ") downlinks port count found on this switch."
+    oc=1
+  else:
+    os = "[OK] expected downlinks port count found (" + str(portcount) + ")"
+    oc=0
+
+  session = prepare_session(conf['api_user'],conf['api_pass'])	#for every POST we need new session. thats "feature" of ICINGA. lel. :( :)
+  result = post_check_result(conf['api_host'],int(conf['api_port']),str(switch_fqdn),"external-poc-downlink-port-count",int(oc),str(os),conf['check_source'])
+
+
+
+
 
 
 
