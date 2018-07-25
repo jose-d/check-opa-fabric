@@ -31,6 +31,8 @@ import re			#regular expression parsing to detect the opareport link
 
 #functions:
 
+
+
 def info_message(message):
   print strftime("%Y-%m-%d %H:%M:%S", gmtime()) + "\t" + message
 
@@ -56,21 +58,24 @@ def prepare_session(httpuser,httppassword):
 
   return session
 
-def post_check_result(icingaserver,icingaserverport,host,check,status,output,source):
+def post_check_result(icingaserver,icingaserverport,host,check,status,output,source,debug=False):
 
-  print "posting.."
+  if debug: print "posting.."
 
   URL='https://' + str(icingaserver) + ":" + str(icingaserverport) + '/v1/actions/process-check-result?service=' + str(host) + '!' + str(check)
+
   try:
     r=session.post(URL,json={'exit_status':str(status),'plugin_output':str(output),'check_source':str(source)},headers={'Accept': 'application/json','Connection':'close'})
+    if debug: print str(r)
     if r.status_code == 200:
       return True
     else:
       return False
   except:
+    if debug: raise
     return False
   
-  print "posted."
+  if debug: print "posted."
 
 def uri_validator(x):
   try:
@@ -79,18 +84,22 @@ def uri_validator(x):
   except:
     return False
 
-def check_indicator(value,name,ok_values,warning_values):
+def check_indicator(value,name,ok_values,warning_values,hide_good=False):
 
   crit=False
   warn=False
 
   if str(value) in ok_values:
-    message="[OK] indicator " + str(name) + " has reference value, " + str(value) + "/" + str(ok_values) + "."
+    if hide_good:
+      message=""
+      pass
+    else:
+      message="[OK] indicator " + str(name) + " has reference value, " + str(value) + "/" + str(ok_values) + "."
   elif str(value) in warning_values:
-    message="[Warning] indicator " + str(name) + " is at warning level, " + str(value) + "/" + str(ok_values) + "."
+    message="[WARNING] indicator " + str(name) + " is at warning level, " + str(value) + "/" + str(ok_values) + "."
     warn=True
   else:
-    message="[Critical] indicator " + str(name) + " is at critical level, " + str(value) + "/" + str(ok_values) + "."
+    message="[CRITICAL] indicator " + str(name) + " is at critical level, " + str(value) + "/" + str(ok_values) + "."
     crit=True
 
   if crit: rc=2
@@ -114,42 +123,97 @@ def process_check_output(crit,warn,os,rc,message):
 def parse_node_from_nodedesc(node_desc):
   return node_desc.split(' ')[0].strip()
 
-def check_port(port_error_counters):
+def check_port(port_error_counters,hide_good=False):
 
   crit=False
   warn=False
   os=""
 
   #LinkQualityIndicator
-  (rc,message) = check_indicator(port_error_counters['LinkQualityIndicator'],'LinkQualityIndicator',['5'],['4'])
+  (rc,message) = check_indicator(port_error_counters['LinkQualityIndicator'],'LinkQualityIndicator',['5'],['4'],hide_good)
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkSpeedActive
-  (rc,message) = check_indicator(port_error_counters['LinkSpeedActive'],'LinkSpeedActive',['25Gb'],[])
+  (rc,message) = check_indicator(port_error_counters['LinkSpeedActive'],'LinkSpeedActive',['25Gb'],[],hide_good)
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkWidthDnGradeTxActive
-  (rc,message) = check_indicator(port_error_counters['LinkWidthDnGradeTxActive'],'LinkWidthDnGradeTxActive',['4'],[])
+  (rc,message) = check_indicator(port_error_counters['LinkWidthDnGradeTxActive'],'LinkWidthDnGradeTxActive',['4'],[],hide_good)
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #LinkWidthDnGradeRxActive
-  (rc,message) = check_indicator(port_error_counters['LinkWidthDnGradeRxActive'],'LinkWidthDnGradeRxActive',['4'],[])
+  (rc,message) = check_indicator(port_error_counters['LinkWidthDnGradeRxActive'],'LinkWidthDnGradeRxActive',['4'],[],hide_good)
   (crit,warn,os) = process_check_output(crit,warn,os,rc,message)
 
   #all "simple" err counters - we're chacking if number is higher than some threshold.
   for counter in error_counters:
+    bad=False
     rs="[OK]"
     value=int(port_error_counters[counter])
     stats.save_stat(fabric,node,value,counter)
     if value>error_counters[counter]['warn']:
       warn=True
+      bad=True
       rs="[WARNING]"
     if value>error_counters[counter]['crit']:
+      bad=True
       crit=True
       rs="[CRITICAL]"
-    os = os + '<p>' + str(rs) + ":" + str(counter) + " " + str(value) + "</p>"
+    if bad or not hide_good:
+      os = os + '<p>' + str(rs) + ":" + str(counter) + " " + str(value) + "</p>"
 
   return (crit,warn,os)
+
+def check_switch_ports(switch,switch_icinga_hostname):
+
+  os_links = ""
+  oc_links = 0
+  warn = False
+  crit = False
+
+  try:
+
+    for port in inter_switch_links[switch]:
+      try:
+        local_errors = opa_errors[switch][int(port)]
+
+        remote_switch_nodedesc = inter_switch_links[switch][port][0]
+        remote_switch_portnr = inter_switch_links[switch][port][1]
+        remote_errors = opa_errors[remote_switch_nodedesc][int(remote_switch_portnr)]
+
+        (r_crit, r_warn, r_os) = check_port(remote_errors, hide_good=True)  # we don't want to see good ports, bcs. there is too much of them
+        (l_crit, l_warn, l_os) = check_port(local_errors, hide_good=True)
+
+        if r_crit or l_crit:
+          crit = True
+        if r_warn or l_warn:
+          warn = True
+
+        if l_crit or l_warn:
+          os_links = str(os_links) + "<p><b> local port " + str(port) + " is not healthy: </b></p>"
+          os_links = str(os_links) + str(l_os)
+
+        if r_crit or r_warn:
+          os_links = str(os_links) + "<p><b> remote port connected to port " + str(port) + ", " + str(remote_switch_nodedesc) + " is not healthy: </b></p>"
+          os_links = str(os_links) + str(r_os)
+
+      except KeyError:
+        print "err: key missing"
+        raise
+        pass
+
+    if crit:
+      oc_links = 2
+      os_links = "[CRITICAL] - problems found on switch ports \n" + str(os_links)
+    elif warn:
+      oc_links = 1
+      os_links = "[WARNING] - problem found on switch ports \n" + str(os_links)
+    else:
+      os_links = "[OK] - switch ports are OK \n" + str(os_links)
+
+    result = post_check_result(conf['api_host'], int(conf['api_port']), str(switch_icinga_hostname),"external-poc-downlink-port-health", int(oc_links), str(os_links), conf['check_source'],debug=False)
+  except KeyError:
+    result = post_check_result(conf['api_host'], int(conf['api_port']), str(switch_icinga_hostname),"external-poc-downlink-port-health", 3, "switch unreachable", conf['check_source'],debug=False)
 
 
 
@@ -418,13 +482,61 @@ for line in stdout_orn.splitlines():
     else:
       node_guid_matched = False
 
-#parse the links between top and director switches
+#parse the links between switches
 
 #100g 0x00117501020c3864  25 SW   top06
 #<->  0x001175010277954a   8 SW   opa4 L121B
 
+first_line_pattern = re.compile("^\d+g\s+0x\w{16}\s+\d+\s+SW")
+second_line_pattern = re.compile("^<->\s+0x\w{16}\s+\d+\s+SW")
 
+src_nodedesc=None
+src_portnr=None
 
+dest_nodedesc=None
+dest_portnr=None
+
+inter_switch_links = {}
+
+for row in stdout_orl.splitlines():
+  if not src_nodedesc and not src_portnr and not dest_nodedesc and not dest_portnr:
+    if first_line_pattern.search(str(row)):
+      row_splitted=row.split()
+      src_portnr = str(row_splitted[2]).strip()
+      src_nodedesc = ""
+      for row_splitted_index in range(4,len(row_splitted)):
+        src_nodedesc = src_nodedesc + row_splitted[row_splitted_index] + " "
+      src_nodedesc=src_nodedesc.strip()
+      continue
+
+  if src_nodedesc and src_portnr and not dest_nodedesc and not dest_portnr:
+    if second_line_pattern.search(str(row)):
+      row_splitted = row.split()
+      dest_portnr = str(row_splitted[2]).strip()
+      dest_nodedesc = ""
+      for row_splitted_index in range(4,len(row_splitted)):
+        dest_nodedesc = dest_nodedesc + row_splitted[row_splitted_index] + " "
+      dest_nodedesc=dest_nodedesc.strip()
+      #now we have what we want
+      if not src_nodedesc in inter_switch_links: inter_switch_links[src_nodedesc]={}
+      if not dest_nodedesc in inter_switch_links: inter_switch_links[dest_nodedesc]={}
+      inter_switch_links[src_nodedesc][src_portnr]=(dest_nodedesc,dest_portnr)  #save the result into structure
+      inter_switch_links[dest_nodedesc][dest_portnr]=(src_nodedesc,src_portnr)  #and the reverse path too.
+
+      #reset the state
+      src_nodedesc = None
+      src_portnr = None
+      dest_nodedesc = None
+      dest_portnr = None
+      continue
+
+    else:
+      #reset the state too as most likely broken input or smth like this..
+      src_nodedesc = None
+      src_portnr = None
+      dest_nodedesc = None
+      dest_portnr = None
+      continue
 
 #and parse the opareport links now - stdout_orl should look like:
 
@@ -464,7 +576,7 @@ for row in stdout_orl.splitlines():
       for row_splitted_index in range(4,len(row_splitted)):
         switch_nodedesc=switch_nodedesc+row_splitted[row_splitted_index] + " "
 
-      print "link info: node_guid: " + str(node_guid) + " (" + str(node_nodedesc) + ") switch guid: " + str(switch_guid) + ", port: " + str(switch_port) + ", desc: " + str(switch_nodedesc)
+      #print "link info: node_guid: " + str(node_guid) + " (" + str(node_nodedesc) + ") switch guid: " + str(switch_guid) + ", port: " + str(switch_port) + ", desc: " + str(switch_nodedesc)
       if node_guid in fabric:
         fabric[node_guid]['nb'] = ( switch_guid,switch_port,switch_nodedesc)  #the switch guid is NODEGUID - not PORT_GUID (!) :(
       else:
@@ -495,6 +607,8 @@ session = prepare_session('externalchecks','externalchecks')
 
 #stats structure
 stats=Stats()
+
+print "Processing nodes.."
   
 for node in node2guid:  #provide results for nodes
 
@@ -502,7 +616,6 @@ for node in node2guid:  #provide results for nodes
   os=""
 
   try:
-
     # parse data from fabric data structures:
 
     nb=fabric[node2guid[node]]['nb']                  #get neighboor node guid
@@ -535,8 +648,6 @@ for node in node2guid:  #provide results for nodes
 
   #header for the output
 
-#  os=str(os)+'<p>'
-
   if l_crit or l_warn:
     os=str(os)+"local port problem"
   if r_crit or r_warn:
@@ -557,11 +668,10 @@ for node in node2guid:  #provide results for nodes
   os=str(os)+str(r_os)
   os=str(os)+"</p>"
 
-  print "OS" + str(os)
+  #print "OS" + str(os)
 
   oc=0
   node_fqdn=str(node) + str(conf['node_to_fqdn_suffix'])
-  print "fqdn:" + str(node_fqdn)
 
   if warn: oc=1
   if crit: oc=2
@@ -593,6 +703,57 @@ for switch in top_level_switches:
   session = prepare_session(conf['api_user'],conf['api_pass'])	#for every POST we need new session. thats "feature" of ICINGA. lel. :( :)
   result = post_check_result(conf['api_host'],int(conf['api_port']),str(switch_fqdn),"external-poc-downlink-port-count",int(oc),str(os),conf['check_source'])
 
+  #now check and post the downlink health:
+
+  os_links = "header\n"
+  oc_links = 0
+  warn=False
+  crit=False
+
+  for port in inter_switch_links[switch]:
+    try:
+      local_errors = opa_errors[switch][int(port)]
+
+      remote_switch_nodedesc=inter_switch_links[switch][port][0]
+      remote_switch_portnr=inter_switch_links[switch][port][1]
+      remote_errors = opa_errors[remote_switch_nodedesc][int(remote_switch_portnr)]
+
+      (r_crit, r_warn, r_os) = check_port(remote_errors,hide_good=True) #we don't want to see good ports, bcs. there is too much of them
+      (l_crit, l_warn, l_os) = check_port(local_errors,hide_good=True)
+
+      if r_crit or l_crit: crit=True
+      if r_warn or l_warn: warn=True
+
+      if l_crit or l_warn:
+        os_links = str(os_links) + "<p><b> local port " + str(port) + " is not healthy: </b></p>"
+        os_links = str(os_links) + str(l_os)
+
+      if r_crit or r_warn:
+        os_links = str(os_links) + "<p><b> remote port connected to port " + str(port) + " is not healthy: </b></p>"
+        os_links = str(os_links) + str(r_os)
+
+    except KeyError:
+      print "err: key missing"
+      raise
+      pass
+
+  if crit or crit: oc_links = 2
+  elif warn or warn: oc_links = 1
+
+  session = prepare_session(conf['api_user'],conf['api_pass'])	#for every POST we need new session. thats "feature" of ICINGA. lel. :( :)
+  result = post_check_result(conf['api_host'],int(conf['api_port']),str(switch_fqdn),"external-poc-downlink-port-health",int(oc_links),str(os_links),conf['check_source'])
+
+spines=conf['spines']
+
+for spine in spines:
+  spine_hostname=str(spine).replace(' ','_') #in icinga there are no spaces alowed there in object naming
+  check_switch_ports(spine,spine_hostname)
+
+others=conf['others']
+
+for switch in others:
+  switch_hostname=str(switch).replace(' ','_') #in icinga there are no spaces alowed there in object naming
+  check_switch_ports(switch,switch_hostname)
 
 
 
