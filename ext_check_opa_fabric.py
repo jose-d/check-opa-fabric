@@ -254,14 +254,13 @@ command_string='opareport -q -o links'
 cmd = Command(command_string)
 (rc_orl,stdout_orl,stderr_orl) = cmd.run(30)        #30 sec is enough for everyone. :)
 
-#opareport -o nodes -N -d 1
+#opareport -o nodes -d 1 - used to have the nodeGUID and imageGUID relation..
 
 print "running opareport -o nodes"
-command_string='opareport -o nodes -N -d 1'
+command_string='opareport -o nodes -d 1'
 
 cmd = Command(command_string)
 (rc_orn,stdout_orn,stderr_orn) = cmd.run(30)        #30 sec is enough for everyone. :)
-
 
 print "data analysis.."
 
@@ -334,6 +333,62 @@ for row in opa_extract_error_csv_reader:	#now iterate over lines and create dict
   if not portnr in opa_errors[node_desc]: opa_errors[node_desc][int(portnr)]=oee
 
 print "Errors parsed.."
+
+#and parse the top-level-fabric switches, their nodeguid and image guid
+# we look for following pattern:
+#
+#     Name: top01
+#         NodeGUID: 0x00117501020c4752 Type: SW
+#         Ports: 48 PartitionCap: 32 SystemImageGuid: 0x00117501ff0c4752
+#
+
+#here: conf['top_level_switch_name_pattern'] is string "top" - as a top level switch pattern:
+
+name_line_pattern = re.compile("\s+Name:\s+top\w+")
+node_guid_pattern = re.compile("\s+NodeGUID:\s+\w{16}")
+system_image_guid_pattern = re.compile("SystemImageGuid:")
+
+top_level_switch_name=None
+top_level_switch_node_guid=None
+top_level_switch_image_guid=None
+
+top_level_switches={}
+
+for line in stdout_orn.splitlines():
+  if not top_level_switch_name and not top_level_switch_node_guid and not top_level_switch_image_guid:
+    #we're looking for first line:
+    if name_line_pattern.search(str(line)):
+      #name matched
+      top_level_switch_name = str(line.split()[1]).strip()
+      continue
+  elif top_level_switch_name and not top_level_switch_node_guid and not top_level_switch_image_guid:
+    #we have switch name, we're looking for second line - the one with NodeGUID:
+    if node_guid_pattern.search(str(line)):
+      #matched, good
+      top_level_switch_node_guid = str(str(line).strip().split(' ')[1])
+      continue
+    else:
+      top_level_switch_name = None  #some mistake, broken format etc.
+      continue
+  elif top_level_switch_name and top_level_switch_node_guid and not top_level_switch_image_guid:
+    #we have switch name, we have node guid, we're looking for image guid:
+    if system_image_guid_pattern.search(str(line)):
+      #matched, good
+      top_level_switch_image_guid = str(line.split()[5]).strip()
+      #now we have everyhing
+      top_level_switches[top_level_switch_name] = (top_level_switch_node_guid,top_level_switch_image_guid)
+      #reset the loop variables:
+      top_level_switch_node_guid = None
+      top_level_switch_image_guid =None
+      top_level_switch_name = None
+      continue
+    else:
+      top_level_switch_name = None  #some mistake, broken format, etc. lets reset and start from the 0
+      top_level_switch_node_guid = None
+      continue
+
+print "top level switches parsed"
+
 
 #and parse the NodeGuid to SystemImageGuid
 # we look for following patterns:
@@ -499,9 +554,8 @@ for node in node2guid:
   os=str(os)+str(r_os)
   os=str(os)+"</p>"
 
-
-
   print "OS" + str(os)
+
   oc=0
   node_fqdn=str(node) + str(conf['node_to_fqdn_suffix'])
   print "fqdn:" + str(node_fqdn)
@@ -512,7 +566,7 @@ for node in node2guid:
   session = prepare_session(conf['api_user'],conf['api_pass'])	#for every POST we need new session. thats "feature" of ICINGA. lel. :( :)
   result = post_check_result(conf['api_host'],int(conf['api_port']),str(node_fqdn),"external-poc-OPA-quality",int(oc),str(os),conf['check_source'])
 
-print str(stats)
+#print str(stats) just for debug
 
 sys.exit(int(Icinga.STATE_UNKNOWN))
 
