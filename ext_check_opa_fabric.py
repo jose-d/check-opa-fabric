@@ -13,6 +13,7 @@ import os.path
 import sys
 import platform
 
+import timeit
 from time import gmtime, strftime
 from subprocess import PIPE, Popen,call
 
@@ -164,6 +165,10 @@ def check_port(port_error_counters,hide_good=False):
 
   return (crit,warn,os)
 
+def runtime_info_message(message,start_time):
+    now = timeit.default_timer() - start_time
+    print "[" + str("0%.9f" % now) + "] " + message
+
 def check_switch_ports(switch,switch_icinga_hostname):
 
   os_links = ""
@@ -278,19 +283,26 @@ class Command(object):
 
     return (self.rc,self.stdout,self.stderr)
 
-# get config from config file - the config file path is now hardcoded..
+# main: ----------------------------------------------------------------------------------------------------------------
+
+start_time = timeit.default_timer()
+
+# get config from config file - the config file path is now hardcoded.. :(
 
 configpath = os.path.abspath("/usr/local/monitoring/ext_check_opa_fabric.conf")
+
+debug=False
 
 if os.path.isfile(configpath):
   conffile = open(configpath,'r')
   conf = yaml.safe_load(conffile)
-  print "conf"
-  print str(conf)
-  print "end of conf"
+  if debug:
+    print "conf"
+    print str(conf)
+    print "end of conf"
   conffile.close()
 else:
-  print "No config file found"
+  print "Err: No config file found"
   sys.exit(2)
 
 #parse counters and their thresholds:
@@ -302,43 +314,38 @@ for item in conf['thresholds']:
   error_counters[counter_name]['crit']=item['crit']
   error_counters[counter_name]['warn']=item['warn']
 
-print str(error_counters)
+if debug:
+  print str(error_counters)
 
-#execute the opa*tools and parse results:
 
-print "extracting LIDs from fabric.."
+
 command_string='opaextractlids -q -F nodetype:FI'
-
+runtime_info_message("extracting LIDs from fabric.. (" + str(command_string) + ")",start_time)
 cmd = Command(command_string)
 (rc_oel,stdout_oel,stderr_oel) = cmd.run(15)	#15 sec is enough for everyone. :)
 
-#opaextracterror -q
-
-print "extracting Errors in fabric.."
 command_string='opaextracterror -q'
-
+runtime_info_message("extracting error counters from fabric.. (" + str(command_string) + ")",start_time)
 cmd = Command(command_string)
 (rc_oee,stdout_oee,stderr_oee) = cmd.run(30)        #30 sec is enough for everyone. :)
 
-#opareport -q -o links
-
-print "extracting Link info from fabric.."
 command_string='opareport -q -o links'
-
+runtime_info_message("extracting link info from fabric.. (" + str(command_string) + ")", start_time)
 cmd = Command(command_string)
 (rc_orl,stdout_orl,stderr_orl) = cmd.run(30)        #30 sec is enough for everyone. :)
 
-#opareport -o nodes -d 1 - used to have the nodeGUID and imageGUID relation..
-
-print "running opareport -o nodes"
 command_string='opareport -o nodes -d 1'
-
+runtime_info_message("extracting node info from fabric.. (" + str(command_string) + ")", start_time)
 cmd = Command(command_string)
 (rc_orn,stdout_orn,stderr_orn) = cmd.run(30)        #30 sec is enough for everyone. :)
 
-print "data analysis.."
 
-#fabric data structure - dictionary where hostname is key:
+runtime_info_message("Data analysis and transformations:", start_time )
+
+# first data structure: fabric[]
+# - dictionary where guid is key
+
+runtime_info_message("creating fabric and node2guid structures", start_time )
 
 fabric={}
 node2guid={}
@@ -368,9 +375,10 @@ for row in opa_extract_lids_csv_reader:        #now iterate over lines and creat
   #and create the node -> guid mapping (yes, for switches it will make no sense..(?)
   node2guid[parse_node_from_nodedesc(row[3])]=guid
 
-print "LIDs parsed.."
 
-#..and parse the lines from Opa Extract Error:
+runtime_info_message("Parsing opa_error data structure",start_time)
+
+#..and parse the lines from Opa Extract Error csv output
 
 try: 
   opa_extract_error_csv_reader = csv.reader(stdout_oee.splitlines(), delimiter=';')
@@ -406,7 +414,7 @@ for row in opa_extract_error_csv_reader:	#now iterate over lines and create dict
   if not node_desc in opa_errors: opa_errors[node_desc]={}
   if not portnr in opa_errors[node_desc]: opa_errors[node_desc][int(portnr)]=oee
 
-print "Errors parsed.."
+runtime_info_message("Extracting top level switches",start_time)
 
 #and parse the top-level-fabric switches, their nodeguid and image guid
 # we look for following pattern:
@@ -461,8 +469,7 @@ for line in stdout_orn.splitlines():
       top_level_switch_node_guid = None
       continue
 
-print "top level switches parsed"
-
+runtime_info_message("NodeGUID <-> SystemImageGuid lookup table parsing..",start_time)
 
 #and parse the NodeGuid to SystemImageGuid
 # we look for following patterns:
@@ -496,6 +503,8 @@ for line in stdout_orn.splitlines():
 
 #100g 0x00117501020c3864  25 SW   top06
 #<->  0x001175010277954a   8 SW   opa4 L121B
+
+runtime_info_message("Parsing interswitch links",start_time)
 
 first_line_pattern = re.compile("^\d+g\s+0x\w{16}\s+\d+\s+SW")
 second_line_pattern = re.compile("^<->\s+0x\w{16}\s+\d+\s+SW")
@@ -547,6 +556,9 @@ for row in stdout_orl.splitlines():
       dest_nodedesc = None
       dest_portnr = None
       continue
+
+
+runtime_info_message("Parsing node neighboors",start_time)
 
 #and parse the opareport links now - stdout_orl should look like:
 
@@ -609,7 +621,7 @@ for row in stdout_orl.splitlines():
       node_found=False
 
 
-print "Node neighboors parsed.."
+runtime_info_message("Processing nodes",start_time)
 
 #iterate over nodes and checks good and bad things:
 session = prepare_session('externalchecks','externalchecks')
@@ -618,8 +630,6 @@ session = prepare_session('externalchecks','externalchecks')
 #stats structure
 stats=Stats()
 
-print "Processing nodes.."
-  
 for node in node2guid:  #provide results for nodes
 
   #reset the loop variables where needed:
@@ -642,7 +652,7 @@ for node in node2guid:  #provide results for nodes
 
   except KeyError:
 #    raise  #for debug uncomment
-    pass	#there are some data missing, we don't care - most likely this is just disconnected/off node etc.
+    continue    #there are some data missing, let's take different node
 
   crit=False
   warn=False
@@ -691,18 +701,20 @@ for node in node2guid:  #provide results for nodes
 
 #check the TOP switches if they have expected amount of downlinks:
 
+runtime_info_message("Processing top level switches",start_time)
+
 for switch in top_level_switches:
   oc=0
   os=""
 
   switch_fqdn=str(switch) + str(conf['node_to_fqdn_suffix'])
 
-  print "switch: " + str(switch)
+  #print "switch: " + str(switch)
   #count the ports:
   portcount=0
   for port in opa_errors[switch]:
     portcount=portcount+1
-  print "port count" + str(portcount)
+  #print "port count" + str(portcount)
   if int(conf['top_level_switch_downlinks_count']) != int(portcount):
     os = "[WARNING] different (" + str(portcount) + ") than expected (" + str(conf['top_level_switch_downlinks_count'])+ ") downlinks port count found on this switch."
     oc=1
@@ -724,15 +736,15 @@ for switch in top_level_switches:
     try:
       local_errors = opa_errors[switch][int(port)]
 
-      remote_switch_nodedesc=inter_switch_links[switch][port][0]
-      remote_switch_portnr=inter_switch_links[switch][port][1]
+      remote_switch_nodedesc = inter_switch_links[switch][port][0]
+      remote_switch_portnr = inter_switch_links[switch][port][1]
       remote_errors = opa_errors[remote_switch_nodedesc][int(remote_switch_portnr)]
 
-      (r_crit, r_warn, r_os) = check_port(remote_errors,hide_good=True) #we don't want to see good ports, bcs. there is too much of them
-      (l_crit, l_warn, l_os) = check_port(local_errors,hide_good=True)
+      (r_crit, r_warn, r_os) = check_port(remote_errors, hide_good=True) #we don't want to see good ports, bcs. there is too much of them
+      (l_crit, l_warn, l_os) = check_port(local_errors, hide_good=True)
 
-      if r_crit or l_crit: crit=True
-      if r_warn or l_warn: warn=True
+      if r_crit or l_crit: crit = True
+      if r_warn or l_warn: warn = True
 
       if l_crit or l_warn:
         os_links = str(os_links) + "<p><b> local port " + str(port) + " is not healthy: </b></p>"
@@ -753,22 +765,20 @@ for switch in top_level_switches:
   session = prepare_session(conf['api_user'],conf['api_pass'])	#for every POST we need new session. thats "feature" of ICINGA. lel. :( :)
   result = post_check_result(conf['api_host'],int(conf['api_port']),str(switch_fqdn),"external-poc-downlink-port-health",int(oc_links),str(os_links),conf['check_source'])
 
+runtime_info_message("Processing spine-card-switches",start_time)
+
 spines=conf['spines']
 
 for spine in spines:
-  spine_hostname=str(spine).replace(' ','_') #in icinga there are no spaces alowed there in object naming
+  spine_hostname = str(spine).replace(' ','_') #in icinga there are no spaces alowed there in object naming
   check_switch_ports(spine,spine_hostname)
+
+runtime_info_message("spine switches done",start_time)
 
 others=conf['others']
 
 for switch in others:
-  switch_hostname=str(switch).replace(' ','_') #in icinga there are no spaces alowed there in object naming
+  switch_hostname = str(switch).replace(' ','_') #in icinga there are no spaces alowed there in object naming
   check_switch_ports(switch,switch_hostname)
 
-
-
-
-
-
-
-
+runtime_info_message("other switches done",start_time)
