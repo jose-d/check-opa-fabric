@@ -34,15 +34,6 @@ def error_message(message):
     print bcolors.FAIL + strftime("%Y-%m-%d %H:%M:%S", gmtime()) + "\t" + message + bcolors.ENDC
 
 
-def parse_int_value_from_ipmitool_line(ipmitool_line):
-    try:
-        i = int(str(ipmitool_line).split('|')[1].strip().split('.')[0])
-        return i
-    except:
-        print "ERR in parse_int_value_from_ipmitool_line: Error when parsing Integer value from line " + str(ipmitool_line)
-        sys.exit(int(Icinga.STATE_UNKNOWN))
-
-
 def prepare_session(http_user, http_password):
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning)  # disable SSL warning
 
@@ -57,12 +48,12 @@ def prepare_session(http_user, http_password):
 def post_check_result(icinga_server, icinga_server_port, host, check, status, output, source, debug=False):
     if debug: print "posting.."
 
-    URL = 'https://' + str(icinga_server) + ":" + str(icinga_server_port) + '/v1/actions/process-check-result?service=' + str(host) + '!' + str(check)
+    url = 'https://' + str(icinga_server) + ":" + str(icinga_server_port) + '/v1/actions/process-check-result?service=' + str(host) + '!' + str(check)
 
     session = prepare_session(conf['api_user'], conf['api_pass'])
 
     try:
-        r = session.post(URL, json={'exit_status': str(status), 'plugin_output': str(output), 'check_source': str(source)}, headers={'Accept': 'application/json', 'Connection': 'close'})
+        r = session.post(url, json={'exit_status': str(status), 'plugin_output': str(output), 'check_source': str(source)}, headers={'Accept': 'application/json', 'Connection': 'close'})
         if debug: print str(r)
         if r.status_code == 200:
             return True
@@ -147,7 +138,7 @@ def check_port(port_error_counters, hide_good=False):
     (rc, message) = check_indicator(port_error_counters['LinkWidthDnGradeRxActive'], 'LinkWidthDnGradeRxActive', ['4'], [], hide_good)
     (crit, warn, os) = process_check_output(crit, warn, os, rc, message)
 
-    # all "simple" err counters - we're chacking if number is higher than some threshold.
+    # all "simple" err counters - we're checking if number is higher than some threshold.
     for counter in error_counters:
         bad = False
         rs = "[OK]"
@@ -244,6 +235,9 @@ class Stats():
 
 
 class Icinga():
+
+    # constants for Icinga(Nagios) return codes:
+
     STATE_OK = 0
     STATE_WARNING = 1
     STATE_CRITICAL = 2
@@ -252,6 +246,9 @@ class Icinga():
 
 
 class bcolors():
+
+    # constants for colors in BASH terminal:
+
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
     OKGREEN = '\033[92m'
