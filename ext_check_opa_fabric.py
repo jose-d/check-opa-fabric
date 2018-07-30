@@ -163,6 +163,26 @@ def runtime_info_message(message, start_time):
     print "[" + str("0%.9f" % now) + "] " + message
 
 
+def check_switch_interswitch_links_count(switch, switch_icinga_hostname, expected_port_count):
+    oc = Icinga.STATE_OK
+    os = ""
+
+    # count the ports:
+    portcount = 0
+
+    for port in opa_errors[switch]:
+        portcount = portcount + 1
+
+    if int(expected_port_count) != int(portcount):
+        os = "[WARNING] different (" + str(portcount) + ") than expected (" + str(conf['top_level_switch_downlinks_count']) + ") downlinks port count found on this switch."
+        oc = Icinga.STATE_WARNING
+    else:
+        os = "[OK] expected downlinks port count found (" + str(portcount) + ") there on " + str(switch)
+        oc = Icinga.STATE_OK
+
+    result = post_check_result(conf['api_host'], int(conf['api_port']), switch_icinga_hostname, "external-poc-downlink-port-count", int(oc), str(os), conf['check_source'])
+
+
 def check_switch_ports(switch, switch_icinga_hostname):
     os_links = ""
     oc_links = Icinga.STATE_OK
@@ -690,32 +710,21 @@ for node in node2guid:  # provide results for nodes
 
     result = post_check_result(conf['api_host'], int(conf['api_port']), str(node_fqdn), "external-poc-OPA-quality", int(oc), str(os), conf['check_source'])
 
-# check the TOP switches if they have expected amount of downlinks:
-
 runtime_info_message("Processing top level switches", start_time)
 
 for switch in top_level_switches:
+
+
     oc = Icinga.STATE_OK
     os = ""
 
     switch_fqdn = str(switch) + str(conf['node_to_fqdn_suffix'])
 
-    # print "switch: " + str(switch)
-    # count the ports:
-    portcount = 0
-    for port in opa_errors[switch]:
-        portcount = portcount + 1
-    # print "port count" + str(portcount)
-    if int(conf['top_level_switch_downlinks_count']) != int(portcount):
-        os = "[WARNING] different (" + str(portcount) + ") than expected (" + str(conf['top_level_switch_downlinks_count']) + ") downlinks port count found on this switch."
-        oc = Icinga.STATE_WARNING
-    else:
-        os = "[OK] expected downlinks port count found (" + str(portcount) + ")"
-        oc = Icinga.STATE_OK
+    # amount of interswitch links:
 
-    result = post_check_result(conf['api_host'], int(conf['api_port']), str(switch_fqdn), "external-poc-downlink-port-count", int(oc), str(os), conf['check_source'])
+    check_switch_interswitch_links_count(switch, switch_fqdn, conf['top_level_switch_downlinks_count'])
 
-    # now check and post the downlink health:
+    # downlink port health:
 
     os_links = "header\n"
     oc_links = Icinga.STATE_OK
