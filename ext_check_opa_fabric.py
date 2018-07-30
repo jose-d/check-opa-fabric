@@ -714,71 +714,27 @@ runtime_info_message("Processing top level switches", start_time)
 
 for switch in top_level_switches:
 
+    icinga_hostname = str(switch) + str(conf['node_to_fqdn_suffix'])
+    check_switch_interswitch_links_count(switch, icinga_hostname, conf['top_level_switch_downlinks_count']) # amount of interswitch links:
+    check_switch_ports(switch, icinga_hostname) # downlink port health:
 
-    oc = Icinga.STATE_OK
-    os = ""
-
-    switch_fqdn = str(switch) + str(conf['node_to_fqdn_suffix'])
-
-    # amount of interswitch links:
-
-    check_switch_interswitch_links_count(switch, switch_fqdn, conf['top_level_switch_downlinks_count'])
-
-    # downlink port health:
-
-    os_links = "header\n"
-    oc_links = Icinga.STATE_OK
-    warn = False
-    crit = False
-
-    for port in inter_switch_links[switch]:
-        try:
-            local_errors = opa_errors[switch][int(port)]
-
-            remote_switch_nodedesc = inter_switch_links[switch][port][0]
-            remote_switch_portnr = inter_switch_links[switch][port][1]
-            remote_errors = opa_errors[remote_switch_nodedesc][int(remote_switch_portnr)]
-
-            (r_crit, r_warn, r_os) = check_port(remote_errors, hide_good=True)  # we don't want to see good ports, bcs. there is too much of them
-            (l_crit, l_warn, l_os) = check_port(local_errors, hide_good=True)
-
-            if r_crit or l_crit: crit = True
-            if r_warn or l_warn: warn = True
-
-            if l_crit or l_warn:
-                os_links = str(os_links) + "<p><b> local port " + str(port) + " is not healthy: </b></p>"
-                os_links = str(os_links) + str(l_os)
-
-            if r_crit or r_warn:
-                os_links = str(os_links) + "<p><b> remote port connected to port " + str(port) + " is not healthy: </b></p>"
-                os_links = str(os_links) + str(r_os)
-
-        except KeyError:
-            print "err: key missing"
-            raise
-            pass
-
-    if crit or crit:
-        oc_links = Icinga.STATE_CRITICAL
-    elif warn or warn:
-        oc_links = Icinga.STATE_WARNING
-
-    result = post_check_result(conf['api_host'], int(conf['api_port']), str(switch_fqdn), "external-poc-downlink-port-health", int(oc_links), str(os_links), conf['check_source'])
 
 runtime_info_message("Processing spine-card-switches", start_time)
 
 spines = conf['spines']
 
 for spine in spines:
-    spine_hostname = str(spine).replace(' ', '_')  # in icinga there are no spaces alowed there in object naming
-    check_switch_ports(spine, spine_hostname)
+
+    icinga_hostname = str(spine).replace(' ', '_')  # in icinga there are no spaces allowed there in object naming
+    check_switch_ports(spine, icinga_hostname)
 
 runtime_info_message("spine switches done", start_time)
 
 others = conf['others']
 
 for switch in others:
-    switch_hostname = str(switch).replace(' ', '_')  # in icinga there are no spaces alowed there in object naming
-    check_switch_ports(switch, switch_hostname)
+
+    icinga_hostname = str(switch).replace(' ', '_')  # in icinga there are no spaces allowed there in object naming
+    check_switch_ports(switch, icinga_hostname)
 
 runtime_info_message("other switches done", start_time)
