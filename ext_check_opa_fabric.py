@@ -8,11 +8,8 @@
 # Scripting: Josef Dvoracek
 
 
-import csv  # to parse CSV from intel OPA tools
 import os.path
-import re  # regular expression parsing to detect the opareport link
 import sys
-import timeit
 from urlparse import urlparse  # URL validation
 
 import requests  # to be able send passive checks result to Icinga2 API
@@ -110,7 +107,7 @@ def parse_node_from_nodedesc(node_desc):
     return node_desc.split(' ')[0].strip()
 
 
-def check_port(port_error_counters, fabric, hide_good=False):
+def check_port(port_error_counters, hide_good=False):
     crit = False
     warn = False
     os = ""
@@ -155,11 +152,7 @@ def check_switch_interswitch_links_count(switch, switch_icinga_hostname, expecte
     oc = Icinga.STATE_OK
     os = ""
 
-    # count the ports:
-    portcount = 0
-
-    for port in fabric_info.opa_errors[switch]:
-        portcount = portcount + 1
+    portcount = fabric_info.get_switch_inter_switch_port_count(switch)
 
     if int(expected_port_count) != int(portcount):
         os = "[WARNING] different (" + str(portcount) + ") than expected (" + str(conf['top_level_switch_downlinks_count']) + ") downlinks port count found on this switch."
@@ -181,14 +174,8 @@ def check_switch_ports(switch, switch_icinga_hostname, fabric_info):
 
         for port in fabric_info.inter_switch_links[switch]:
             try:
-                local_errors = fabric_info.opa_errors[switch][int(port)]
-
-                remote_switch_nodedesc = fabric_info.inter_switch_links[switch][port][0]
-                remote_switch_portnr = fabric_info.inter_switch_links[switch][port][1]
-                remote_errors = fabric_info.opa_errors[remote_switch_nodedesc][int(remote_switch_portnr)]
-
-                (r_crit, r_warn, r_os) = check_port(remote_errors, fabric_info.fabric, hide_good=True)  # we don't want to see good ports, bcs. there is too much of them
-                (l_crit, l_warn, l_os) = check_port(local_errors, fabric_info.fabric, hide_good=True)
+                (r_crit, r_warn, r_os) = check_port(fabric_info.get_switch_remote_port_errors(switch, port), hide_good=True)  # we don't want to see good ports, bcs. there is too much of them
+                (l_crit, l_warn, l_os) = check_port(fabric_info.get_switch_local_port_errors(switch, port), hide_good=True)
 
                 if r_crit or l_crit:
                     crit = True
@@ -200,7 +187,7 @@ def check_switch_ports(switch, switch_icinga_hostname, fabric_info):
                     os_links = str(os_links) + str(l_os)
 
                 if r_crit or r_warn:
-                    os_links = str(os_links) + "<p><b> remote port connected to port " + str(port) + ", " + str(remote_switch_nodedesc) + " is not healthy: </b></p>"
+                    os_links = str(os_links) + "<p><b> remote port connected to port " + str(port) + ", " + str(fabric_info.get_switch_remote_port_nodedesc(switch, port)) + "(port nr. " + str(fabric_info.get_switch_remote_port_portnr(switch, port)) + ") is not healthy: </b></p>"
                     os_links = str(os_links) + str(r_os)
 
             except KeyError:
@@ -217,29 +204,61 @@ def check_switch_ports(switch, switch_icinga_hostname, fabric_info):
         else:
             os_links = "[OK] - switch ports are OK \n" + str(os_links)
 
-        result = post_check_result(conf['api_host'], int(conf['api_port']), str(switch_icinga_hostname), "external-poc-downlink-port-health", int(oc_links), str(os_links), conf['check_source'], debug=False)
+        post_check_result(conf['api_host'], int(conf['api_port']), str(switch_icinga_hostname), "external-poc-downlink-port-health", int(oc_links), str(os_links), conf['check_source'], debug=False)
     except KeyError:
-        result = post_check_result(conf['api_host'], int(conf['api_port']), str(switch_icinga_hostname), "external-poc-downlink-port-health", 3, "switch unreachable", conf['check_source'], debug=False)
+        # this exception means there is port down on the switch. This is not unusual state.
+        post_check_result(conf['api_host'], int(conf['api_port']), str(switch_icinga_hostname), "external-poc-downlink-port-health", 3, "switch unreachable", conf['check_source'], debug=False)
 
 
-class Stats():
+def create_local_port_status_string(port_counters=None):
+    os = ""
 
-    def __init__(self):
-        self.stats = {}
+    os = str(os) + "<p>"
+    os = str(os) + "<b>Local port summary</b>"
+    os = str(os) + str(port_counters)
+    os = str(os) + '</p>'
 
-    def save_stat(self, fabric, node, value, metricname):
-        if metricname not in self.stats:  # if not yet there, we will define default values
-            self.stats[metricname] = {}
-            self.stats[metricname]['min'] = int(+9999)
-            self.stats[metricname]['max'] = int(-9999)
+    return os
 
-        if int(value) > int(self.stats[metricname]['max']):  # if bigger than maximum, save it as new maximum
-            self.stats[metricname]['max'] = value
-        elif int(value) < int(self.stats[metricname]['min']):  # if smaller than minimum, save it as new minimum
-            self.stats[metricname]['min'] = value
 
-    def __str__(self):
-        return "stats (dummy _str_ function..)\n" + str(self.stats) + "end of stats\n"
+def create_remote_port_status_string(port_counters=None, remote_port_nodedesc=None, remote_port_portnr=None):
+    os = ""
+
+    os = str(os) + "<p>"
+    os = str(os) + "<b>Remote port ( nodedesc: " + str(remote_port_nodedesc) + ", port: " + str(remote_port_portnr) + " ) summary</b>"
+    os = str(os) + str(port_counters)
+    os = str(os) + "</p>"
+
+    return os
+
+
+def get_config(config_file_path, debug=False):
+    if os.path.isfile(config_file_path):
+        config_file = open(config_file_path, 'r')
+        conf = yaml.safe_load(config_file)
+        if debug:
+            print "conf"
+            print str(conf)
+            print "end of conf"
+        config_file.close()
+        return conf
+    else:
+        print "Err: No config file found"
+        sys.exit(2)
+
+
+def get_error_counters_from_config(conf):
+    error_counters = {}
+    for item in conf['thresholds']:
+        counter_name = str(item['counter'])
+        error_counters[counter_name] = {}
+        error_counters[counter_name]['crit'] = item['crit']
+        error_counters[counter_name]['warn'] = item['warn']
+
+    if debug:
+        print str(error_counters)
+
+    return error_counters
 
 
 # main: ----------------------------------------------------------------------------------------------------------------
@@ -249,32 +268,13 @@ start_time = timeit.default_timer()
 # get config from config file - the config file path is now hardcoded.. :(
 
 config_file_path = os.path.abspath("/usr/local/monitoring/ext_check_opa_fabric.conf")
+conf = get_config(config_file_path)
 
 debug = False
 
-if os.path.isfile(config_file_path):
-    config_file = open(config_file_path, 'r')
-    conf = yaml.safe_load(config_file)
-    if debug:
-        print "conf"
-        print str(conf)
-        print "end of conf"
-    config_file.close()
-else:
-    print "Err: No config file found"
-    sys.exit(2)
-
 # parse counters and their thresholds:
 
-error_counters = {}
-for item in conf['thresholds']:
-    counter_name = str(item['counter'])
-    error_counters[counter_name] = {}
-    error_counters[counter_name]['crit'] = item['crit']
-    error_counters[counter_name]['warn'] = item['warn']
-
-if debug:
-    print str(error_counters)
+error_counters = get_error_counters_from_config(conf)
 
 runtime_info_message("Collecting data from fabric", start_time)
 
@@ -284,38 +284,18 @@ runtime_info_message("Processing nodes", start_time)
 
 # iterate over nodes and checks good and bad things:
 
-# stats structure
-stats = Stats()
-
 for node in fabric_info.node2guid:  # provide results for nodes
 
-    # reset the loop variables where needed:
-    os = ""
-
-    try:
-        # parse data from fabric data structures:
-
-        nb = fabric_info.fabric[fabric_info.node2guid[node]]['nb']  # get neighboor node guid
-        nb_image = fabric_info.node_guid_to_system_image_guid[nb[0]]  # convert to image guid
-
-        remote_errors = fabric_info.opa_errors[str(nb[2]).strip()][int(nb[1])]  # get error data structure for remote port
-        local_errors = fabric_info.fabric[fabric_info.node2guid[node]]['opa_extract_error']  # get error data structure for local port
-
-        local_lid = fabric_info.fabric[fabric_info.node2guid[node]]['opa_extract_lids']['LID']
-
-        remote_port_guid = nb[0]
-        remote_port_portnr = nb[1]
-        remote_port_nodedesc = nb[2]
-
-    except KeyError:
-        #    raise  #for debug uncomment
-        continue  # there are some data missing, let's take different node
-
+    os = ""  # reset output string
     crit = False
     warn = False
 
-    (r_crit, r_warn, r_os) = check_port(remote_errors, fabric_info.fabric)
-    (l_crit, l_warn, l_os) = check_port(local_errors, fabric_info.fabric)
+    try:
+        (r_crit, r_warn, r_os) = check_port(fabric_info.get_node_remote_port_errors(node))
+        (l_crit, l_warn, l_os) = check_port(fabric_info.get_node_local_port_errors(node))
+    except KeyError:
+        #    raise  #for debug uncomment
+        continue  # there are some data missing, let's take different node
 
     # process return code:
     if r_crit or l_crit:
@@ -333,17 +313,9 @@ for node in fabric_info.node2guid:  # provide results for nodes
     if not (l_crit or l_warn) and not (r_crit or r_warn):
         os = str(os) + "[OK] - both sides of link are OK"
 
-    os = str(os) + '\n'
-
-    os = str(os) + "<p>"
-    os = str(os) + "<b>Local port summary</b>"
-    os = str(os) + str(l_os)
-    os = str(os) + '</p>'
-
-    os = str(os) + "<p>"
-    os = str(os) + "<b>Remote port summary</b>"
-    os = str(os) + str(r_os)
-    os = str(os) + "</p>"
+    os = str(os) + '\n' #append newline to create the separator for icinga..
+    os = str(os) + create_local_port_status_string(l_os)    #local port
+    os = str(os) + create_remote_port_status_string(r_os, fabric_info.get_node_remote_port_nodedesc(node), fabric_info.get_node_remote_port_portnr(node))   #remote port.
 
     node_fqdn = str(node) + str(conf['node_to_fqdn_suffix'])
 

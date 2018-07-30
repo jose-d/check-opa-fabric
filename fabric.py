@@ -15,7 +15,52 @@ class FabricInfoCollector:
     def __parse_node_from_nodedesc(node_desc):
         return node_desc.split(' ')[0].strip()
 
+    #node-oriented getters:
+
+    def get_node_local_port_errors(self,nodename):
+        return self.fabric[self.node2guid[nodename]]['opa_extract_error']
+
+    def get_node_neighboor_tuple(self,nodename):
+        return self.fabric[self.node2guid[nodename]]['nb']        # (neighboor node guid,remote_port_portnr,remote_port_nodedesc)
+
+    def get_node_remote_port_errors(self,nodename):
+        nb = self.get_node_neighboor_tuple(nodename)
+        return self.opa_errors[str(nb[2]).strip()][int(nb[1])]  # return error data structure for remote port
+
+    def get_node_remote_port_nodedesc(self,nodename):
+        nb = self.get_node_neighboor_tuple(nodename)
+        return str(nb[2])
+
+    def get_node_remote_port_portnr(self,nodename):
+        nb = self.get_node_neighboor_tuple(nodename)
+        return int(nb[1])
+
+    #switch-oriented getters:
+
+    def get_switch_local_port_errors(self,switch_nodedesc,port):
+        return self.opa_errors[switch_nodedesc][int(port)]
+
+    def get_switch_remote_port_nodedesc(self,switch_nodedesc,port):
+        return str(self.inter_switch_links[switch_nodedesc][port][0])
+
+    def get_switch_remote_port_portnr(self,switch_nodedesc,port):
+        return int(self.inter_switch_links[switch_nodedesc][port][1])
+
+    def get_switch_remote_port_errors(self,switch_nodedesc,port):
+        return self.opa_errors[self.get_switch_remote_port_nodedesc(switch_nodedesc, port)][int(self.get_switch_remote_port_portnr(switch_nodedesc, port))]
+
+    def get_switch_inter_switch_port_count(self,switch_nodedesc):
+        portcount = 0
+        for port in self.opa_errors[switch_nodedesc]:
+            portcount = portcount + 1
+
+        return portcount
+
+
     def __init__(self):
+
+        #TODO: it would be nice to have a possibility to re-collect particular data gain
+        #TODO: now we do everything here in constructor, well, could be better.
 
         #data collection from fabric:
 
