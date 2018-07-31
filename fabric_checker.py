@@ -103,6 +103,52 @@ class FabricChecker:
         return (crit, warn, os)
 
     @staticmethod
+    def check_node_port_health(node, fabric_info,conf):
+
+        os = ""  # reset output string
+        crit = False
+        warn = False
+
+        error_counters = FabricChecker.get_error_counters_from_config(conf)
+
+        try:
+            (r_crit, r_warn, r_os) = FabricChecker.check_port(fabric_info.get_node_remote_port_errors(node), error_counters)
+            (l_crit, l_warn, l_os) = FabricChecker.check_port(fabric_info.get_node_local_port_errors(node), error_counters)
+        except KeyError:
+            #    raise  #for debug uncomment
+            return
+
+        # process return code:
+        if r_crit or l_crit:
+            crit = True
+        elif r_warn or l_warn:
+            warn = True
+
+        # header for the output
+
+        if l_crit or l_warn:
+            os = str(os) + "local port problem"
+        if r_crit or r_warn:
+            os = str(os) + "remote port problem"
+
+        if not (l_crit or l_warn) and not (r_crit or r_warn):
+            os = str(os) + "[OK] - both sides of link are OK"
+
+        os = str(os) + '\n'  # append newline to create the separator for icinga..
+        os = str(os) + Icinga.create_local_port_status_string(l_os)  # local port
+        os = str(os) + Icinga.create_remote_port_status_string(r_os, fabric_info.get_node_remote_port_nodedesc(node), fabric_info.get_node_remote_port_portnr(node))  # remote port.
+
+        node_fqdn = str(node) + str(conf['node_to_fqdn_suffix'])
+
+        oc = Icinga.STATE_OK
+        if warn:
+            oc = Icinga.STATE_WARNING
+        if crit:
+            oc = Icinga.STATE_CRITICAL
+
+        result = Icinga.post_check_result(conf, conf['api_host'], int(conf['api_port']), str(node_fqdn), "external-poc-OPA-quality", int(oc), str(os), conf['check_source'])
+
+    @staticmethod
     def check_switch_interswitch_links_count(switch, switch_icinga_hostname, expected_port_count, fabric_info, conf):
         oc = Icinga.STATE_OK
         os = ""
