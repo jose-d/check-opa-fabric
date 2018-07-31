@@ -1,10 +1,8 @@
-
 from time import gmtime, strftime
 import subprocess
 import threading
 import timeit
-
-
+from urlparse import urlparse  # URL validation
 
 
 def info_message(message):
@@ -14,22 +12,25 @@ def info_message(message):
 def error_message(message):
     print bcolors.FAIL + strftime("%Y-%m-%d %H:%M:%S", gmtime()) + "\t" + message + bcolors.ENDC
 
+
 def runtime_info_message(message, start_time):
     now = timeit.default_timer() - start_time
     print "[" + str("0%.9f" % now) + "] " + message
 
-class Icinga():
 
-    # constants for Icinga(Nagios) return codes:
+def uri_validator(x):
+    try:
+        result = urlparse(x)
+        return result.scheme and result.netloc and result.path
+    except:
+        return False
 
-    STATE_OK = 0
-    STATE_WARNING = 1
-    STATE_CRITICAL = 2
-    STATE_UNKNOWN = 3
-    STATE_DEPENDENT = 4
+
+def parse_node_from_nodedesc(node_desc):
+    return node_desc.split(' ')[0].strip()
+
 
 class bcolors():
-
     # constants for colors in BASH terminal:
 
     HEADER = '\033[95m'

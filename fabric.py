@@ -15,7 +15,9 @@ class FabricInfoCollector:
     def __parse_node_from_nodedesc(node_desc):
         return node_desc.split(' ')[0].strip()
 
-    #node-oriented getters:
+    # getters + setters:
+
+    # node-oriented getters:
 
     def get_node_local_port_errors(self,nodename):
         return self.fabric[self.node2guid[nodename]]['opa_extract_error']
@@ -35,7 +37,7 @@ class FabricInfoCollector:
         nb = self.get_node_neighboor_tuple(nodename)
         return int(nb[1])
 
-    #switch-oriented getters:
+    # switch-oriented getters:
 
     def get_switch_local_port_errors(self,switch_nodedesc,port):
         return self.opa_errors[switch_nodedesc][int(port)]
