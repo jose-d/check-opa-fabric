@@ -1,21 +1,27 @@
+# standard-imports
 from time import gmtime, strftime
 import subprocess
 import threading
 import timeit
 from urlparse import urlparse  # URL validation
+import sys
+
+if __name__ == "__main__":
+    print("this file should be not executed standalone")
+    sys.exit(1)
 
 
 def info_message(message):
-    print strftime("%Y-%m-%d %H:%M:%S", gmtime()) + "\t" + message
+    print(strftime("%Y-%m-%d %H:%M:%S", gmtime()) + "\t" + message)
 
 
 def error_message(message):
-    print bcolors.FAIL + strftime("%Y-%m-%d %H:%M:%S", gmtime()) + "\t" + message + bcolors.ENDC
+    print(bcolors.FAIL + strftime("%Y-%m-%d %H:%M:%S", gmtime()) + "\t" + message + bcolors.ENDC)
 
 
 def runtime_info_message(message, start_time):
     now = timeit.default_timer() - start_time
-    print "[" + str("0%.9f" % now) + "] " + message
+    print("[" + str("0%.9f" % now) + "] " + message)
 
 
 def uri_validator(x):
@@ -61,7 +67,7 @@ class Command(object):
         thread.start()
         thread.join(timeout)
         if thread.is_alive():
-            print 'Command.run(): timeout: terminating process'
+            print('Command.run(): timeout: terminating process')
             self.process.terminate()
             thread.join()
             self.rc = 999
@@ -70,5 +76,5 @@ class Command(object):
 
 
 if __name__ == "__main__":
-    print "this file should be not executed standalone"
+    print("this file should be not executed standalone")
     sys.exit(1)
