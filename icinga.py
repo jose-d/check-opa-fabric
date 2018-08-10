@@ -1,11 +1,29 @@
 import requests  # to be able send passive checks result to Icinga2 API
+import sys
 from requests.packages.urllib3.exceptions import InsecureRequestWarning  # to be able to modify warning for SSL
 
+if __name__ == "__main__":
+    print "this file should be not executed standalone"
+    sys.exit(1)
 
+
+class IcingaCheckResult():
+
+    def __init__(self):
+        self.text = ""
+        self.status_code = None
+
+    def append_string(self, string):
+        self.text = str(self.text) + str(string)
+
+    def append_new_line(self):
+        self.append_string('\n')
+
+    def prepend_string(self, string):
+        self.text = str(string) + str(self.text)
 
 
 class Icinga():
-
     # constants for Icinga(Nagios) return codes:
 
     STATE_OK = 0
@@ -26,8 +44,12 @@ class Icinga():
         return session
 
     @staticmethod
+    def post_icr(conf, icr, check_name, host):
+        return Icinga.post_check_result(conf, conf['api_host'], int(conf['api_port']), host, check_name, int(icr.status_code), str(icr.text), conf['check_source'])
+
+    @staticmethod
     def post_check_result(conf, icinga_server, icinga_server_port, host, check, status, output, source, debug=False):
-        if debug: print "posting.."
+        if debug: print("posting..")
 
         url = 'https://' + str(icinga_server) + ":" + str(icinga_server_port) + '/v1/actions/process-check-result?service=' + str(host) + '!' + str(check)
 
@@ -35,7 +57,7 @@ class Icinga():
 
         try:
             r = session.post(url, json={'exit_status': str(status), 'plugin_output': str(output), 'check_source': str(source)}, headers={'Accept': 'application/json', 'Connection': 'close'})
-            if debug: print str(r)
+            if debug: print(str(r))
             if r.status_code == 200:
                 return True
             else:
