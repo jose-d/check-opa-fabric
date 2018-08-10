@@ -1,13 +1,15 @@
-import sys
+# standard-imports
 import csv  # to parse CSV from intel OPA tools
 import re  # regular expression parsing to detect the opareport link
 
+# project-imports
 from helpers import *
-
+from icinga import Icinga
 
 if __name__ == "__main__":
-    print "this file should be not executed standalone"
+    print("this file should be not executed standalone")
     sys.exit(1)
+
 
 class FabricInfoCollector:
 
@@ -19,52 +21,47 @@ class FabricInfoCollector:
 
     # node-oriented getters:
 
-    def get_node_local_port_errors(self,nodename):
+    def get_node_local_port_errors(self, nodename):
         return self.fabric[self.node2guid[nodename]]['opa_extract_error']
 
-    def get_node_neighboor_tuple(self,nodename):
-        return self.fabric[self.node2guid[nodename]]['nb']        # (neighboor node guid,remote_port_portnr,remote_port_nodedesc)
+    def get_node_neighbour_tuple(self, nodename):
+        return self.fabric[self.node2guid[nodename]]['nb']  # (neighboor node guid,remote_port_portnr,remote_port_nodedesc)
 
-    def get_node_remote_port_errors(self,nodename):
-        nb = self.get_node_neighboor_tuple(nodename)
+    def get_node_remote_port_errors(self, nodename):
+        nb = self.get_node_neighbour_tuple(nodename)
         return self.opa_errors[str(nb[2]).strip()][int(nb[1])]  # return error data structure for remote port
 
-    def get_node_remote_port_nodedesc(self,nodename):
-        nb = self.get_node_neighboor_tuple(nodename)
+    def get_node_remote_port_nodedesc(self, nodename):
+        nb = self.get_node_neighbour_tuple(nodename)
         return str(nb[2])
 
-    def get_node_remote_port_portnr(self,nodename):
-        nb = self.get_node_neighboor_tuple(nodename)
+    def get_node_remote_port_portnr(self, nodename):
+        nb = self.get_node_neighbour_tuple(nodename)
         return int(nb[1])
 
     # switch-oriented getters:
 
-    def get_switch_local_port_errors(self,switch_nodedesc,port):
+    def get_switch_local_port_errors(self, switch_nodedesc, port):
         return self.opa_errors[switch_nodedesc][int(port)]
 
-    def get_switch_remote_port_nodedesc(self,switch_nodedesc,port):
+    def get_switch_remote_port_nodedesc(self, switch_nodedesc, port):
         return str(self.inter_switch_links[switch_nodedesc][port][0])
 
-    def get_switch_remote_port_portnr(self,switch_nodedesc,port):
+    def get_switch_remote_port_portnr(self, switch_nodedesc, port):
         return int(self.inter_switch_links[switch_nodedesc][port][1])
 
-    def get_switch_remote_port_errors(self,switch_nodedesc,port):
+    def get_switch_remote_port_errors(self, switch_nodedesc, port):
         return self.opa_errors[self.get_switch_remote_port_nodedesc(switch_nodedesc, port)][int(self.get_switch_remote_port_portnr(switch_nodedesc, port))]
 
-    def get_switch_inter_switch_port_count(self,switch_nodedesc):
-        portcount = 0
-        for port in self.opa_errors[switch_nodedesc]:
-            portcount = portcount + 1
-
-        return portcount
-
+    def get_switch_inter_switch_port_count(self, switch_nodedesc):
+        return len(self.opa_errors[switch_nodedesc])
 
     def __init__(self):
 
-        #TODO: it would be nice to have a possibility to re-collect particular data gain
-        #TODO: now we do everything here in constructor, well, could be better.
+        # TODO: it would be nice to have a possibility to re-collect particular data gain
+        # TODO: now we do everything here in constructor, well, could be better.
 
-        #data collection from fabric:
+        # data collection from fabric:
 
         command_string = 'opaextractlids -q -F nodetype:FI'
         cmd = Command(command_string)
@@ -83,18 +80,18 @@ class FabricInfoCollector:
         (self.rc_orn, self.stdout_orn, self.stderr_orn) = cmd.run(30)  # 30 sec is enough for everyone. :)
 
         # .
-        # ..parse the opaextractLID - this will provide us two following data structures:
+        # ..parse the opaextractlids - this will provide us two following data structures:
         # .
 
-        self.fabric = {}        # fabric[SystemImageGUID]['opa_extract_lids'] = ['SystemImageGUID', 'PortNum', 'NodeType', 'NodeDesc', 'LID']
-        self.node2guid = {}     # node_desc -> SystemImageGUID
+        self.fabric = {}  # fabric[SystemImageGUID]['opa_extract_lids'] = ['SystemImageGUID', 'PortNum', 'NodeType', 'NodeDesc', 'LID']
+        self.node2guid = {}  # node_desc -> SystemImageGUID
 
         # as we have the data just for "FI" nodes in the fabric, both structures are switches-free ..
 
         try:
             opa_extract_lids_csv_reader = csv.reader(self.stdout_oel.splitlines(), delimiter=';')
         except:
-            print "ERR: csv parse orror in opaextractlids output."
+            print("ERR: csv parse error in opaextractlids output.")
             sys.exit(int(Icinga.STATE_UNKNOWN))
 
         csv_headers = ['SystemImageGUID', 'PortNum', 'NodeType', 'NodeDesc', 'LID']  # there is no CSV header so we'll create it manually..
@@ -102,7 +99,8 @@ class FabricInfoCollector:
 
         for row in opa_extract_lids_csv_reader:  # now iterate over lines and create dictionary from every line
             guid = row[0]
-            if not guid in self.fabric: self.fabric[guid] = {}  # create key
+            if guid not in self.fabric:
+                self.fabric[guid] = {}  # create key
 
             oel = {}
             for column_number in range(0, opa_extract_lids_csv_columns_count):
@@ -113,13 +111,13 @@ class FabricInfoCollector:
             self.node2guid[FabricInfoCollector.__parse_node_from_nodedesc(row[3])] = guid
 
         # .
-        # ..parse the data from opaextract errors (will produce self.opa_errors)
+        # ..parse the data from opaextracterror (will produce self.opa_errors)
         # .
 
         try:
             opa_extract_error_csv_reader = csv.reader(self.stdout_oee.splitlines(), delimiter=';')
         except:
-            print "ERR: csv parse orror in opaextracterror output."
+            print("ERR: csv parse error in opaextracterror output.")
             sys.exit(int(Icinga.STATE_UNKNOWN))
 
         self.opa_errors = {}
@@ -139,7 +137,7 @@ class FabricInfoCollector:
             node_desc = row[0]
             oee = {}
 
-            if not guid in self.fabric:
+            if guid not in self.fabric:
                 self.fabric[guid] = {}  # create key it it's not there..
             if not str(FabricInfoCollector.__parse_node_from_nodedesc(row[0])) in self.node2guid:
                 self.node2guid[str(FabricInfoCollector.__parse_node_from_nodedesc(row[0]))] = guid  # create key if it's not there..
@@ -306,7 +304,7 @@ class FabricInfoCollector:
                     if node_guid in self.fabric:
                         self.fabric[node_guid]['nb'] = (switch_guid, switch_port, switch_nodedesc)  # the switch guid is NODEGUID - not PORT_GUID (!) :(
                     else:
-                        print "err: node is missing in fabric, strange error."
+                        print("err: node is missing in fabric, strange error.")
 
                     node_found = False
                 else:
@@ -349,9 +347,3 @@ class FabricInfoCollector:
                     node_guid_matched = False
                 else:
                     node_guid_matched = False
-
-
-
-
-
-
