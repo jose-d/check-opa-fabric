@@ -1,4 +1,10 @@
 from icinga import Icinga
+import sys
+from icinga import IcingaCheckResult
+
+if __name__ == "__main__":
+    print "this file should be not executed standalone"
+    sys.exit(1)
 
 
 # static class providing checking of fabric
@@ -103,50 +109,128 @@ class FabricChecker:
         return (crit, warn, os)
 
     @staticmethod
-    def check_node_port_health(node, fabric_info,conf):
+    def check_port_with_perf_data(port_error_counters, error_counters, hide_good=False):
 
-        os = ""  # reset output string
         crit = False
         warn = False
+        unknown = False
 
-        error_counters = FabricChecker.get_error_counters_from_config(conf)
+        os = ""
+
+        perf_data = []
+
+        # LinkQualityIndicator
+        (rc, message) = FabricChecker.check_indicator(port_error_counters['LinkQualityIndicator'], 'LinkQualityIndicator', ['5'], ['4'], hide_good)
+        (crit, warn, os) = Icinga.process_check_output(crit, warn, os, rc, message)
+
+        # LinkSpeedActive
+        (rc, message) = FabricChecker.check_indicator(port_error_counters['LinkSpeedActive'], 'LinkSpeedActive', ['25Gb'], [], hide_good)
+        (crit, warn, os) = Icinga.process_check_output(crit, warn, os, rc, message)
+
+        # LinkWidthDnGradeTxActive
+        (rc, message) = FabricChecker.check_indicator(port_error_counters['LinkWidthDnGradeTxActive'], 'LinkWidthDnGradeTxActive', ['4'], [], hide_good)
+        (crit, warn, os) = Icinga.process_check_output(crit, warn, os, rc, message)
+
+        # LinkWidthDnGradeRxActive
+        (rc, message) = FabricChecker.check_indicator(port_error_counters['LinkWidthDnGradeRxActive'], 'LinkWidthDnGradeRxActive', ['4'], [], hide_good)
+        (crit, warn, os) = Icinga.process_check_output(crit, warn, os, rc, message)
+
+        # all "simple" err counters - we're checking if number is higher than some threshold.
+        for counter in error_counters:
+
+            try:
+                value = int(port_error_counters[counter])
+            except:
+                # we're not able to parse value
+                # the typical reason is the data are missing, bcs port is down
+                # we'll return unknown flag
+
+                unknown = True
+                return (crit, warn, unknown, "", None)
+
+            tags = None
+            data_tuple = (None, counter, value, tags)
+            perf_data.append(data_tuple)
+
+        return crit, warn, unknown, os, perf_data
+
+    @staticmethod
+    def check_node_port_health(node, fabric_info, conf):
+
+        crit = False
+        warn = False
+        unknown = False
+
+        error_counters = FabricChecker.get_error_counters_from_config(conf)  # counters we want to check including thresholds
 
         try:
-            (r_crit, r_warn, r_os) = FabricChecker.check_port(fabric_info.get_node_remote_port_errors(node), error_counters)
-            (l_crit, l_warn, l_os) = FabricChecker.check_port(fabric_info.get_node_local_port_errors(node), error_counters)
+            (r_crit, r_warn, r_unknown, r_os, data_remote) = FabricChecker.check_port_with_perf_data(fabric_info.get_node_remote_port_errors(node), error_counters)
+            (l_crit, l_warn, l_unknown, l_os, data_local) = FabricChecker.check_port_with_perf_data(fabric_info.get_node_local_port_errors(node), error_counters)
         except KeyError:
             #    raise  #for debug uncomment
-            return
+            return None, None
 
         # process return code:
         if r_crit or l_crit:
             crit = True
         elif r_warn or l_warn:
             warn = True
+        elif r_unknown or l_unknown:
+            unknown = True
+
+        icr = IcingaCheckResult()
 
         # header for the output
 
         if l_crit or l_warn:
-            os = str(os) + "local port problem"
+            icr.append_string("local port problem")
         if r_crit or r_warn:
-            os = str(os) + "remote port problem"
+            icr.append_string("remote port problem")
 
-        if not (l_crit or l_warn) and not (r_crit or r_warn):
-            os = str(os) + "[OK] - both sides of link are OK"
+        if not (l_crit or l_warn) and not (r_crit or r_warn) and not (r_unknown or l_unknown):
+            icr.append_string("[OK] - both sides of link are OK")
 
-        os = str(os) + '\n'  # append newline to create the separator for icinga..
-        os = str(os) + Icinga.create_local_port_status_string(l_os)  # local port
-        os = str(os) + Icinga.create_remote_port_status_string(r_os, fabric_info.get_node_remote_port_nodedesc(node), fabric_info.get_node_remote_port_portnr(node))  # remote port.
+        if unknown:
+            icr.append_string("[UNKNOWN] - one of the ports is unreachable..")
+
+        icr.append_new_line()
+        icr.append_string(Icinga.create_local_port_status_string(l_os))  # local port
+        icr.append_string(Icinga.create_remote_port_status_string(r_os, fabric_info.get_node_remote_port_nodedesc(node), fabric_info.get_node_remote_port_portnr(node)))  # remote port.
 
         node_fqdn = str(node) + str(conf['node_to_fqdn_suffix'])
 
-        oc = Icinga.STATE_OK
+        icr.status_code = Icinga.STATE_OK
         if warn:
-            oc = Icinga.STATE_WARNING
+            icr.status_code = Icinga.STATE_WARNING
         if crit:
-            oc = Icinga.STATE_CRITICAL
+            icr.status_code = Icinga.STATE_CRITICAL
+        if unknown:
+            icr.status_code = Icinga.STATE_UNKNOWN
 
-        result = Icinga.post_check_result(conf, conf['api_host'], int(conf['api_port']), str(node_fqdn), "external-poc-OPA-quality", int(oc), str(os), conf['check_source'])
+        Icinga.post_check_result(conf, conf['api_host'], int(conf['api_port']), str(node_fqdn), "external-poc-OPA-quality", int(icr.status_code), str(icr.text), conf['check_source'])
+
+        # add tags to the data
+
+        newdata = []
+
+        if data_local:  # data can be also empty = dead port, etc. then we'll return none.
+            for item in data_local:
+                (t_time, t_metric, t_value, t_tags) = item
+                t_tags = [node, 'local']  # tag was empty, let's add tag
+                data_local.remove(item)
+                newdata.append((t_time, t_metric, t_value, t_tags))
+
+        if data_remote:
+            for item in data_remote:
+                (t_time, t_metric, t_value, t_tags) = item
+                t_tags = [node, 'remote']  # tag was empty, let's add tag
+                data_remote.remove(item)
+                newdata.append((t_time, t_metric, t_value, t_tags))
+
+        if len(newdata) > 1:
+            return newdata, icr
+        else:
+            return None, icr
 
     @staticmethod
     def check_switch_interswitch_links_count(switch, switch_icinga_hostname, expected_port_count, fabric_info, conf):
@@ -194,7 +278,7 @@ class FabricChecker:
                         os_links = str(os_links) + str(r_os)
 
                 except KeyError:
-                    print "err: key missing"
+                    print("err: key missing")
                     raise
                     pass
 
