@@ -65,7 +65,7 @@ class TimeSeriesDatabase:
                 continue
         return True  # everything matched
 
-    def rate(self, metric, tags):
+    def rate(self, metric, tags, perhour=False):
 
         # find first:
 
@@ -104,7 +104,10 @@ class TimeSeriesDatabase:
         try:
             diff_time = int(last[0]) - int(first[0])  # time diff (in seconds as we use unix timestamps)
             diff_value = int(last[2]) - int(first[2])  # counter value diff.
-            rate = int((float(diff_value) / float(diff_time)) * float(3600))
+            if perhour:
+                rate = int((float(diff_value) / float(diff_time)) * float(3600)) #per hour
+            else:
+                rate = int((float(diff_value) / float(diff_time)))  #per second
 
         except ZeroDivisionError:
             return 0, diff_time  # we divided by zero, because zero time... :)
@@ -114,4 +117,4 @@ class TimeSeriesDatabase:
         # TODO: check if the value grow is monotonic / check for possible overflows.. But not sure what to do with them...
         # TODO: maybe also reduce the amount of returned items..
 
-        return rate, first[2], last[2], diff_time
+        return rate, first[2], last[2], diff_time   #that means hourly-rate, first value, last value, diff in secs

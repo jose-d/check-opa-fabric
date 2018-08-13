@@ -31,8 +31,9 @@ class FabricChecker:
         for item in conf['thresholds']:
             counter_name = str(item['counter'])
             error_counters[counter_name] = {}
-            error_counters[counter_name]['crit'] = item['crit']
-            error_counters[counter_name]['warn'] = item['warn']
+            error_counters[counter_name]['crit'] = item['crit'] # absolute critical threshold    # TODO: IMO this makes no sense in long term when rate will be working
+            error_counters[counter_name]['warn'] = item['warn'] # absolute warning threshold     # TODO: -""-
+            error_counters[counter_name]['rate'] = item['warn'] # critical rate                  # TODO: perhaps warning rate could make sense.. But not sure what should be the event/action to be done
 
         if debug:
             print str(error_counters)

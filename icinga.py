@@ -7,7 +7,7 @@ if __name__ == "__main__":
     sys.exit(1)
 
 
-class IcingaCheckResult():
+class IcingaCheckResult:
 
     def __init__(self):
         self.text = ""
@@ -23,7 +23,7 @@ class IcingaCheckResult():
         self.text = str(string) + str(self.text)
 
 
-class Icinga():
+class Icinga:
     # constants for Icinga(Nagios) return codes:
 
     STATE_OK = 0

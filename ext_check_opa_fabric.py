@@ -15,6 +15,7 @@ import yaml  # config file parsing
 import logging.handlers
 from time import sleep, time
 from daemon import Daemon
+import icinga
 from icinga import Icinga
 
 import timeit
@@ -62,10 +63,11 @@ class CheckOpaFabricDaemon(Daemon):
 
         i = 0
         ts = TimeSeriesDatabase(1200)  # 1200 second=20min
+        error_counters = FabricChecker.get_error_counters_from_config(conf)  # parse counters and their thresholds:
 
-        while True and int(i) is not int(2):  # two is enough for everyone ^^
+        while True and int(i) is not int(100):  # two is enough for everyone ^^
             try:
-                i = i + 1  # TODO: this is just dummy counter and this should be removed for production
+                i = i + 1  # TODO: this is just dummy counter to limit the amount of daemon loops and should be removed for production including related logic.
 
                 # main loop logic here
                 logger.info("Collecting data from fabric")
@@ -83,10 +85,28 @@ class CheckOpaFabricDaemon(Daemon):
                 start_time = timeit.default_timer()
 
                 for node in fabric_info.node2guid:  # provide results for nodes
-                    data, icr = FabricChecker.check_node_port_health(node, fabric_info, conf)  # check node, get perf_data and icinga check result
+                    data, icr = FabricChecker.check_node_port_health(node, fabric_info, conf)  # type: (object, IcingaCheckResult)
 
                     if data:
                         ts.append_list(data, fabric_info_collected_ts)  # post performance data into tsdb
+
+                        # analyze the performance counters:
+                        metrics = ts.get_related_metrics(node)
+                        # metrics = ["LocalLinkIntegrityErrors", ]
+                        sides = ["local", "remote"]
+                        html_table = None  # type: String
+                        for metric in metrics:
+                            for side in sides:
+                                value = ts.rate(metric, [side, node])  # will return tuple like: (hourly-rate, first value, last value, diff in secs)
+                                rate = value[0]
+                                if rate > error_counters[metric]['rate']:
+                                    print (str(node) + "," + str(metric) + ":" + str(value) + "/" + str(error_counters[metric]['rate']))
+                                    if not html_table:
+                                        html_table = "<table>"
+                                    html_table = str(html_table) + "<tr><td>" + str(metric) + "(" + str(side) + ")</td><td>" + str(rate) + "/h" + "" + "</td></tr>"
+                        if html_table:
+                            html_table = str(html_table) + "</table>"
+                            icr.append_string(html_table)
 
                     if icr:  # if we do have Icinga check result:
                         node_fqdn = str(node) + str(conf['node_to_fqdn_suffix'])
@@ -110,16 +130,6 @@ class CheckOpaFabricDaemon(Daemon):
                     icinga_hostname = str(switch).replace(' ', '_')  # in icinga there are no spaces allowed there in object naming
                     FabricChecker.check_switch_ports(switch, icinga_hostname, fabric_info, conf)
 
-                now = timeit.default_timer() - start_time
-
-                logger.debug("t(icinga_http_rest)= " + str(now))
-                logger.debug("test rate dump - start")
-                logger.debug("remote" + str(ts.rate('LocalLinkIntegrityErrors', ['remote', 'co4220'])))
-                logger.debug("local" + str(ts.rate('LocalLinkIntegrityErrors', ['local', 'co4220'])))
-                logger.debug("related_tags: " + str(ts.get_related_tags('co4220')))
-                logger.debug("related_metrics: " + str(ts.get_related_metrics('co4220')))
-
-
                 # end of main loop logic.
                 pass
             except:
@@ -129,6 +139,7 @@ class CheckOpaFabricDaemon(Daemon):
             sleep(3)  # 133 seconds = 2mins+-   #FIXME 30 is not much.  #3 even worse :)
 
         logger.debug("loops done..")  # print str(ts.tsdb)
+        exit(0)
 
 
 # main: ----------------------------------------------------------------------------------------------------------------
@@ -136,14 +147,12 @@ class CheckOpaFabricDaemon(Daemon):
 # get config from config file - the config file path is now hardcoded.. :(
 
 pathname = os.path.dirname(sys.argv[0])
-script_directory = os.path.abspath(pathname)    #TODO: for debugging this is not working, as we're starting the project from temp directory
-config_directory = script_directory             #TODO: so for production,
-config_directory = '/usr/local/monitoring'      #TODO: uncomment this line :) when switching to production.
+script_directory = os.path.abspath(pathname)  # TODO: for debugging this is not working, as we're starting the project from temp directory
+config_directory = script_directory  # TODO: so for production,
+config_directory = '/usr/local/monitoring'  # TODO: uncomment this line :) when switching to production.
 
-config_file_path = os.path.abspath( str(config_directory) + "/ext_check_opa_fabric.conf")
+config_file_path = os.path.abspath(str(config_directory) + "/ext_check_opa_fabric.conf")
 conf = get_config(config_file_path)
-
-error_counters = FabricChecker.get_error_counters_from_config(conf)  # parse counters and their thresholds:
 
 # setup logging:
 
