@@ -69,6 +69,8 @@ class CheckOpaFabricDaemon(Daemon):
             try:
                 i = i + 1  # TODO: this is just dummy counter to limit the amount of daemon loops and should be removed for production including related logic.
 
+                logger.info("i:" + str(i))
+
                 # main loop logic here
                 logger.info("Collecting data from fabric")
 
@@ -81,8 +83,6 @@ class CheckOpaFabricDaemon(Daemon):
                 logger.debug("t(FabricInfoCollector())= " + str(now))
 
                 logger.info("Processing nodes")
-
-                start_time = timeit.default_timer()
 
                 for node in fabric_info.node2guid:  # provide results for nodes
                     data, icr = FabricChecker.check_node_port_health(node, fabric_info, conf)  # type: (object, IcingaCheckResult)
@@ -103,7 +103,7 @@ class CheckOpaFabricDaemon(Daemon):
                                     print (str(node) + "," + str(metric) + ":" + str(value) + "/" + str(error_counters[metric]['rate']))
                                     if not html_table:
                                         html_table = "<table>"
-                                    html_table = str(html_table) + "<tr><td>" + str(metric) + "(" + str(side) + ")</td><td>" + str(rate) + "/h" + "" + "</td></tr>"
+                                    html_table = str(html_table) + "<tr><td>" + str(metric) + "(" + str(side) + ")</td><td>" + str(rate) + " /sec" + "" + "</td></tr>"
                         if html_table:
                             html_table = str(html_table) + "</table>"
                             icr.append_string(html_table)

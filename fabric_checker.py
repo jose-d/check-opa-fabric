@@ -31,9 +31,9 @@ class FabricChecker:
         for item in conf['thresholds']:
             counter_name = str(item['counter'])
             error_counters[counter_name] = {}
-            error_counters[counter_name]['crit'] = item['crit'] # absolute critical threshold    # TODO: IMO this makes no sense in long term when rate will be working
-            error_counters[counter_name]['warn'] = item['warn'] # absolute warning threshold     # TODO: -""-
-            error_counters[counter_name]['rate'] = item['warn'] # critical rate                  # TODO: perhaps warning rate could make sense.. But not sure what should be the event/action to be done
+            error_counters[counter_name]['crit'] = item['crit']  # absolute critical threshold    # TODO: IMO this makes no sense in long term when rate will be working
+            error_counters[counter_name]['warn'] = item['warn']  # absolute warning threshold     # TODO: -""-
+            error_counters[counter_name]['rate'] = item['warn']  # critical rate                  # TODO: perhaps warning rate could make sense.. But not sure what should be the event/action to be done
 
         if debug:
             print str(error_counters)
@@ -107,7 +107,7 @@ class FabricChecker:
             if bad or not hide_good:
                 os = os + '<p>' + str(rs) + ":" + str(counter) + " " + str(value) + "</p>"
 
-        return (crit, warn, os)
+        return crit, warn, os
 
     @staticmethod
     def check_port_with_perf_data(port_error_counters, error_counters, hide_good=False):
@@ -142,10 +142,7 @@ class FabricChecker:
             try:
                 value = int(port_error_counters[counter])
             except:
-                # we're not able to parse value
-                # the typical reason is the data are missing, bcs port is down
-                # we'll return unknown flag
-
+                # we're not able to parse value,  the typical reason is the data are missing, bcs port is down, we'll return unknown flag
                 unknown = True
                 return (crit, warn, unknown, "", None)
 
@@ -198,9 +195,8 @@ class FabricChecker:
         icr.append_string(Icinga.create_local_port_status_string(l_os))  # local port
         icr.append_string(Icinga.create_remote_port_status_string(r_os, fabric_info.get_node_remote_port_nodedesc(node), fabric_info.get_node_remote_port_portnr(node)))  # remote port.
 
-        node_fqdn = str(node) + str(conf['node_to_fqdn_suffix'])
-
         icr.status_code = Icinga.STATE_OK
+
         if warn:
             icr.status_code = Icinga.STATE_WARNING
         if crit:
@@ -208,26 +204,33 @@ class FabricChecker:
         if unknown:
             icr.status_code = Icinga.STATE_UNKNOWN
 
-        # add tags to the data
+        new_data = FabricChecker.build_data_bundle(data_local, data_remote, node)
 
-        newdata = []
+        return new_data, icr
 
+    @staticmethod
+    def build_data_bundle(data_local, data_remote, node):
+
+        """
+        add node tag to the data, tag local and remote port..
+        """
+
+        new_data = []
         if data_local:  # data can be also empty = dead port, etc. then we'll return none.
             for item in data_local:
                 (t_time, t_metric, t_value, t_tags) = item
                 t_tags = [node, 'local']  # tag was empty, let's add tag
-                newdata.append((t_time, t_metric, t_value, t_tags))
-
+                new_data.append((t_time, t_metric, t_value, t_tags))
         if data_remote:
             for item in data_remote:
                 (t_time, t_metric, t_value, t_tags) = item
                 t_tags = [node, 'remote']  # tag was empty, let's add tag
-                newdata.append((t_time, t_metric, t_value, t_tags))
+                new_data.append((t_time, t_metric, t_value, t_tags))
 
-        if len(newdata) > 1:
-            return newdata, icr
+        if len(new_data) > 1:
+            return new_data
         else:
-            return None, icr
+            return None
 
     @staticmethod
     def check_switch_interswitch_links_count(switch, switch_icinga_hostname, expected_port_count, fabric_info, conf):
