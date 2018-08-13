@@ -207,8 +207,6 @@ class FabricChecker:
         if unknown:
             icr.status_code = Icinga.STATE_UNKNOWN
 
-        Icinga.post_check_result(conf, conf['api_host'], int(conf['api_port']), str(node_fqdn), "external-poc-OPA-quality", int(icr.status_code), str(icr.text), conf['check_source'])
-
         # add tags to the data
 
         newdata = []
@@ -217,14 +215,12 @@ class FabricChecker:
             for item in data_local:
                 (t_time, t_metric, t_value, t_tags) = item
                 t_tags = [node, 'local']  # tag was empty, let's add tag
-                data_local.remove(item)
                 newdata.append((t_time, t_metric, t_value, t_tags))
 
         if data_remote:
             for item in data_remote:
                 (t_time, t_metric, t_value, t_tags) = item
                 t_tags = [node, 'remote']  # tag was empty, let's add tag
-                data_remote.remove(item)
                 newdata.append((t_time, t_metric, t_value, t_tags))
 
         if len(newdata) > 1:

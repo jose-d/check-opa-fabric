@@ -135,7 +135,14 @@ class CheckOpaFabricDaemon(Daemon):
 
 # get config from config file - the config file path is now hardcoded.. :(
 
-config_file_path = os.path.abspath("/usr/local/monitoring/ext_check_opa_fabric.conf")
+pathname = os.path.dirname(sys.argv[0])
+script_directory = os.path.abspath(pathname)    #TODO: for debugging this is not working, as we're starting the project from temp directory
+config_directory = script_directory             #TODO: so for production,
+config_directory = '/usr/local/monitoring'      #TODO: uncomment this line :)
+
+sys.exit(0)
+
+config_file_path = os.path.abspath( str(config_directory) + "/ext_check_opa_fabric.conf")
 conf = get_config(config_file_path)
 
 error_counters = FabricChecker.get_error_counters_from_config(conf)  # parse counters and their thresholds:
@@ -143,7 +150,7 @@ error_counters = FabricChecker.get_error_counters_from_config(conf)  # parse cou
 # setup logging:
 
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-handler = logging.handlers.RotatingFileHandler('/var/log/check_opa_fabric.log', maxBytes=20 * 1024 * 1024, backupCount=5)
+handler = logging.handlers.RotatingFileHandler(conf['logger_logfile'], maxBytes=20 * 1024 * 1024, backupCount=5)
 handler.setFormatter(formatter)
 logger = logging.getLogger(tool_name)
 logger.addHandler(handler)

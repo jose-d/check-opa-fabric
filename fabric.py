@@ -194,7 +194,7 @@ class FabricInfoCollector:
                 if system_image_guid_pattern.search(str(line)):
                     # matched, good
                     top_level_switch_image_guid = str(line.split()[5]).strip()
-                    # now we have everyhing
+                    # now we have everything
                     self.top_level_switches[top_level_switch_name] = (top_level_switch_node_guid, top_level_switch_image_guid)
                     # reset the loop variables:
                     top_level_switch_node_guid = None
