@@ -48,7 +48,7 @@ def get_config(config_file_path, debug=False):
 
 class CheckOpaFabricDaemon(Daemon):
 
-    def __init__(self, conf, logger, pidfile='/tmp/opastats.pid', stdin='/dev/null', stdout='/tmp/opastats.stdout', stderr='/tmp/opastats.stdout'):
+    def __init__(self, conf, logger, pidfile='/tmp/opastats.pid', stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
 
         Daemon.__init__(self, pidfile, stdin, stdout, stderr)
         self.config = conf
@@ -138,9 +138,7 @@ class CheckOpaFabricDaemon(Daemon):
 pathname = os.path.dirname(sys.argv[0])
 script_directory = os.path.abspath(pathname)    #TODO: for debugging this is not working, as we're starting the project from temp directory
 config_directory = script_directory             #TODO: so for production,
-config_directory = '/usr/local/monitoring'      #TODO: uncomment this line :)
-
-sys.exit(0)
+config_directory = '/usr/local/monitoring'      #TODO: uncomment this line :) when switching to production.
 
 config_file_path = os.path.abspath( str(config_directory) + "/ext_check_opa_fabric.conf")
 conf = get_config(config_file_path)
@@ -160,7 +158,9 @@ logger.info("logging setup done.")
 
 # start daemon:
 
-daemon = CheckOpaFabricDaemon(conf, logger)
+daemon = CheckOpaFabricDaemon(conf, logger, pidfile=conf['daemon_pid'], stdout=conf['daemon_stdout'], stderr=conf['daemon_stderr'])
 daemon.start()
+
+logger.info("daemon started, exiting the main() thread")
 
 sys.exit(0)  # inbetween there is fork of our process, so we can end this one.
