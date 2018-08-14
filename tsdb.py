@@ -1,5 +1,5 @@
-import time
 import sys
+import logging
 from collections import deque
 
 if __name__ == "__main__":
@@ -11,9 +11,9 @@ class TimeSeriesOpaDataItem:
     timestamp = None  # type: int
     remote = None  # type: int
     port = None  # type: int
-    host = None  # type: String
+    host = None  # type: str
     metric_value = None  # type: int
-    metric_name = None  # type: String
+    metric_name = None  # type: str
 
     def __init__(self, metric_name=None, metric_value=None, host=None, port=None, remote=None, timestamp=None):
         """
@@ -21,9 +21,9 @@ class TimeSeriesOpaDataItem:
         :type timestamp: int
         :type remote: int
         :type port: int
-        :type host: String
+        :type host: str
         :type metric_value: int
-        :type metric_name: String
+        :type metric_name: str
         """
 
         self.timestamp = timestamp
@@ -46,17 +46,29 @@ class TimeSeriesOpaDataItem:
 
 
 class TimeSeriesDatabase:
-    node_desc_dictionary = None
+    logger = None  # type: logging.Logger
+    depth = None  # type: int
+    node_desc_dictionary = None  # type: dict
 
-    def __init__(self, depth=10):
+    def __init__(self, logger=None, depth=10):
+        """
+
+        :type depth: int
+        :type logger: logging.Logger
+        """
+
+        self.logger = logger
         self.depth = depth  # depth of TSdb = amount of items
         self.node_desc_dictionary = {}
+
+    def __sizeof__(self):
+        return sys.getsizeof(self.depth) + sys.getsizeof(self.node_desc_dictionary)
 
     def get_node_port_metric_names(self, node, port):
         """
 
         :type port: int
-        :type node: String
+        :type node: str
         """
 
         if node not in self.node_desc_dictionary:
@@ -104,6 +116,13 @@ class TimeSeriesDatabase:
             self.node_desc_dictionary[item.host][item.remote][item.port][item.metric_name] = deque()  # and finally, insert the queue
 
     def get_rate(self, host, remote, port, metric_name):
+        """
+
+        :type metric_name: str
+        :type port: int
+        :type remote: int
+        :type host: str
+        """
 
         dt = self.get_time_difference_between_youngest_and_oldest_data(host, remote, port, metric_name)
 
@@ -117,22 +136,32 @@ class TimeSeriesDatabase:
     def get_value_difference_between_youngest_and_oldest_data(self, host, remote, port, metric_name):
         """
 
-        :type metric_name: String
+        :type metric_name: str
         :type port: int
         :type remote: int
-        :type host: String
+        :type host: str
         """
-        return int(self.node_desc_dictionary[host][remote][port][metric_name][-1][1] - self.node_desc_dictionary[host][remote][port][metric_name][0][1])
+        diff = int(self.node_desc_dictionary[host][remote][port][metric_name][-1][1] - self.node_desc_dictionary[host][remote][port][metric_name][0][1])
+        if diff < 0:
+            self.logger.warning("value diff is in negative numbers. Possible overflow happened.")
+            return 0
+
+        return diff
 
     def get_time_difference_between_youngest_and_oldest_data(self, host, remote, port, metric_name):
         """
 
-        :type metric_name: String
+        :type metric_name: str
         :type port: int
         :type remote: int
-        :type host: String
+        :type host: str
         """
-        return int(self.node_desc_dictionary[host][remote][port][metric_name][-1][0] - self.node_desc_dictionary[host][remote][port][metric_name][0][0])
+        diff = int(self.node_desc_dictionary[host][remote][port][metric_name][-1][0] - self.node_desc_dictionary[host][remote][port][metric_name][0][0])
+        if diff < 0:
+            self.logger.warning("time diff is in negative numbers. Possible overflow happened.")
+            return 0
+
+        return diff
 
     def append_list(self, list_of_data, timestamp):
         """
