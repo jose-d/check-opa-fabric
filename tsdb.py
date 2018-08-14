@@ -1,120 +1,166 @@
 import time
 import sys
+from collections import deque
 
 if __name__ == "__main__":
     print("this file should be not executed standalone")
     sys.exit(1)
 
 
+class TimeSeriesOpaDataItem:
+    timestamp = None  # type: int
+    remote = None  # type: int
+    port = None  # type: int
+    host = None  # type: String
+    metric_value = None  # type: int
+    metric_name = None  # type: String
+
+    def __init__(self, metric_name=None, metric_value=None, host=None, port=None, remote=None, timestamp=None):
+        """
+
+        :type timestamp: int
+        :type remote: int
+        :type port: int
+        :type host: String
+        :type metric_value: int
+        :type metric_name: String
+        """
+
+        self.timestamp = timestamp
+        self.metric_name = metric_name
+        self.metric_value = metric_value
+        self.host = host
+        self.port = port
+        self.remote = remote
+
+    def __repr__(self):
+        return_string = "tsdb.TimeSeriesOpaDataItem instance __repr__:\n"
+        return_string = return_string + "timestamp:\t" + str(self.timestamp) + '\n'
+        return_string = return_string + "metric_name:\t" + str(self.metric_name) + '\n'
+        return_string = return_string + "metric_value:\t" + str(self.metric_value) + '\n'
+        return_string = return_string + "host:\t\t" + str(self.host) + '\n'
+        return_string = return_string + "port:\t\t" + str(self.port) + '\n'
+        return_string = return_string + "remote:\t\t" + str(self.remote) + '\n'
+
+        return str(return_string)
+
+
 class TimeSeriesDatabase:
+    node_desc_dictionary = None
 
     def __init__(self, depth=10):
-        self.depth = depth  # depth of TS in seconds
-        self.tsdb = []  # just list of tuples (ts,metric,value,[tag1,tag2])
-        self.related_tags = {}  # dictionary tag -> tags where one can find all related tags
-        self.related_metrics = {}  # dictionary tag -> metrics
+        self.depth = depth  # depth of TSdb = amount of items
+        self.node_desc_dictionary = {}
 
-    def append_list(self, data, timestamp):
-        if data is None:
-            return  # nothing to add
+    def get_node_port_metric_names(self, node, port):
+        """
 
-        for item in data:
-            (t_time, t_metric, t_value, t_tags) = item
-            t_time = timestamp
-            self.append((t_time, t_metric, t_value, t_tags))
+        :type port: int
+        :type node: String
+        """
 
-    def get_related_tags(self, tag):
-        return self.related_tags[tag]
+        if node not in self.node_desc_dictionary:
+            return None  # we have no data about node
 
-    def get_related_metrics(self, tag):
-        return self.related_metrics[tag]
+        metric_names = []
+        sides = [0, 1]
 
-    def append(self, item):
+        for side in sides:
+            if side in self.node_desc_dictionary[node]:
+                if port in self.node_desc_dictionary[node][side]:
+                    for metric in self.node_desc_dictionary[node][side][port]:
+                        if metric not in metric_names:
+                            metric_names.append(metric)
 
-        # just append (and item should be something. like (ts,metric,value,[tag1,tag2])
-        self.tsdb.append(item)
-
-        # ensure up-to-date tag map
-
-        for tag in item[3]:
-            if tag not in self.related_tags:
-                self.related_tags[tag] = []
-            for tag2 in item[3]:
-                if tag2 not in self.related_tags[tag] and tag2 != tag:
-                    self.related_tags[tag].append(tag2)
-            if tag not in self.related_metrics:
-                self.related_metrics[tag] = []
-            if item[1] not in self.related_metrics[tag]:
-                self.related_metrics[tag].append(item[1])
-
-    def cleanup(self):
-
-        # go over the db and remove items older than max depth. #TODO: consider calling from append, or append_list
-        now = int(time.time())
-
-        for item in self.tsdb:
-            if (item[0] + self.depth) < now:  # item is older than.
-                self.tsdb.remove(item)
+        return metric_names
 
     @staticmethod
-    def all_tags_matched(tags_to_match, tag_set):
-        for tag in tags_to_match:
-            if tag not in tag_set:
-                return False
-            else:
-                continue
-        return True  # everything matched
+    def create_tuple_from_item(item):
+        """
 
-    def rate(self, metric, tags, perhour=False):
+        :type item: TimeSeriesOpaDataItem
+        """
 
-        # find first:
+        return tuple((item.timestamp, item.metric_value))
 
-        first = None
-        last = None
+    def _check_and_create_data_structures_for_item(self, item):
+        """
 
-        for item in self.tsdb:
-            if metric not in item[1]:
-                continue
+        :type item: TimeSeriesOpaDataItem
+        """
 
-            if not TimeSeriesDatabase.all_tags_matched(tags, item[3]):
-                continue
-            else:
-                first = item
-                break
+        # data structure example: self.node_desc_dictionary['co1234']['0'.. local/ '1'..remote]['0'..portnr]['LinkErrorsWhatever']
 
-        for i in range(1, (len(self.tsdb) + 1)):
-            item = self.tsdb[len(self.tsdb) - i]
-            if metric not in item[1]:
-                continue
+        if item.host not in self.node_desc_dictionary:
+            self.node_desc_dictionary[item.host] = {}  # dict for local|remote
 
-            if not TimeSeriesDatabase.all_tags_matched(tags, item[3]):
-                continue
-            else:
-                last = item
-                break
+        if item.remote not in self.node_desc_dictionary[item.host]:
+            self.node_desc_dictionary[item.host][item.remote] = {}  # dict for portNr
 
-        # now we have smth like:
-        # first =  (1533907231, 'LocalLinkIntegrityErrors', 11, ['co5504','local'])
-        # last = (1533907231, 'LocalLinkIntegrityErrors', 11, ['co5504','local'])
+        if item.port not in self.node_desc_dictionary[item.host][item.remote]:
+            self.node_desc_dictionary[item.host][item.remote][item.port] = {}  # dict for metric name
 
-        # here we'll convert it to rate
+        if item.metric_name not in self.node_desc_dictionary[item.host][item.remote][item.port]:
+            self.node_desc_dictionary[item.host][item.remote][item.port][item.metric_name] = deque()  # and finally, insert the queue
 
-        diff_time = None
+    def get_rate(self, host, remote, port, metric_name):
 
-        try:
-            diff_time = int(last[0]) - int(first[0])  # time diff (in seconds as we use unix timestamps)
-            diff_value = int(last[2]) - int(first[2])  # counter value diff.
-            if perhour:
-                rate = int((float(diff_value) / float(diff_time)) * float(3600)) #per hour
-            else:
-                rate = int((float(diff_value) / float(diff_time)))  #per second
+        dt = self.get_time_difference_between_youngest_and_oldest_data(host, remote, port, metric_name)
 
-        except ZeroDivisionError:
-            return 0, diff_time  # we divided by zero, because zero time... :)
-        except TypeError:
-            return None, None  # we have no data
+        if dt == 0:
+            return 0
 
-        # TODO: check if the value grow is monotonic / check for possible overflows.. But not sure what to do with them...
-        # TODO: maybe also reduce the amount of returned items..
+        dv = self.get_value_difference_between_youngest_and_oldest_data(host, remote, port, metric_name)
 
-        return rate, first[2], last[2], diff_time   #that means hourly-rate, first value, last value, diff in secs
+        return float(dv / dt)
+
+    def get_value_difference_between_youngest_and_oldest_data(self, host, remote, port, metric_name):
+        """
+
+        :type metric_name: String
+        :type port: int
+        :type remote: int
+        :type host: String
+        """
+        return int(self.node_desc_dictionary[host][remote][port][metric_name][-1][1] - self.node_desc_dictionary[host][remote][port][metric_name][0][1])
+
+    def get_time_difference_between_youngest_and_oldest_data(self, host, remote, port, metric_name):
+        """
+
+        :type metric_name: String
+        :type port: int
+        :type remote: int
+        :type host: String
+        """
+        return int(self.node_desc_dictionary[host][remote][port][metric_name][-1][0] - self.node_desc_dictionary[host][remote][port][metric_name][0][0])
+
+    def append_list(self, list_of_data, timestamp):
+        """
+
+        :type timestamp: int
+        :type list_of_data: list
+        """
+
+        for list_item in list_of_data:  # that's tuple of values counter,value,node, port, remote
+            item = TimeSeriesOpaDataItem(list_item[0], list_item[1], list_item[2], list_item[3], list_item[4], timestamp)  # (metric_name,metric_value,host,port,remote,timestamp)
+            self.append(item)
+
+    def _append_into_datastruct(self, item):
+        """
+
+        :type item: TimeSeriesOpaDataItem
+        """
+
+        self.node_desc_dictionary[item.host][item.remote][item.port][item.metric_name].append(TimeSeriesDatabase.create_tuple_from_item(item))
+
+    def append(self, item):
+        """
+
+        :type item: TimeSeriesOpaDataItem
+        """
+
+        self._check_and_create_data_structures_for_item(item)
+        self._append_into_datastruct(item)
+
+    def cleanup(self):
+        pass
